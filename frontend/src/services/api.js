@@ -1,11 +1,10 @@
 import axios from 'axios'
-
-const API_BASE_URL = 'http://localhost:8000'
+import { ENV } from '../config/env'
 
 // Create axios instance
 const api = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 30000,
+  baseURL: ENV.API_BASE_URL,
+  timeout: 30000, // 30 seconds
 })
 
 // Request interceptor to add auth token
@@ -26,6 +25,15 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    // Log error details for debugging
+    console.error('API Error:', {
+      url: error.config?.url,
+      method: error.config?.method,
+      status: error.response?.status,
+      data: error.response?.data,
+      message: error.message
+    })
+
     if (error.response?.status === 401) {
       localStorage.removeItem('sessionToken')
       window.location.href = '/'
@@ -36,7 +44,7 @@ api.interceptors.response.use(
 
 // Direct Repository Analysis (No OAuth required)
 export const analyzeRepository = async (repoUrl) => {
-  const response = await api.post('/repo/analyze', { repo_url: repoUrl })
+  const response = await api.post(ENV.ENDPOINTS.ANALYZE, { repo_url: repoUrl })
   return response.data
 }
 
@@ -62,17 +70,17 @@ export const generateTestCode = async (repoUrl, suggestionId, suggestionSummary,
 
 // OAuth-based Repository Access
 export const getRepositories = async () => {
-  const response = await api.get('/repositories')
+  const response = await api.get(ENV.ENDPOINTS.REPOSITORIES)
   return response.data
 }
 
 export const getRepositoryFiles = async (owner, repo) => {
-  const response = await api.get(`/repositories/${owner}/${repo}/files`)
+  const response = await api.get(`${ENV.ENDPOINTS.REPOSITORIES}/${owner}/${repo}/files`)
   return response.data
 }
 
 export const generateSuggestionsOAuth = async (files, repoFullName, framework = null) => {
-  const response = await api.post('/generate-test-suggestions', {
+  const response = await api.post(ENV.ENDPOINTS.GENERATE_SUGGESTIONS, {
     files,
     repo_full_name: repoFullName,
     framework
@@ -81,7 +89,7 @@ export const generateSuggestionsOAuth = async (files, repoFullName, framework = 
 }
 
 export const generateCodeOAuth = async (suggestionId, suggestionSummary, files, repoFullName, framework = null) => {
-  const response = await api.post('/generate-test-code', {
+  const response = await api.post(ENV.ENDPOINTS.GENERATE_CODE, {
     suggestion_id: suggestionId,
     suggestion_summary: suggestionSummary,
     files,
@@ -93,7 +101,7 @@ export const generateCodeOAuth = async (suggestionId, suggestionSummary, files, 
 
 // Pull Request Creation
 export const createPullRequest = async (repoFullName, testCode, testFileName, branchName, commitMessage) => {
-  const response = await api.post('/create-pull-request', {
+  const response = await api.post(ENV.ENDPOINTS.CREATE_PR, {
     repo_full_name: repoFullName,
     test_code: testCode,
     test_file_name: testFileName,
@@ -105,12 +113,12 @@ export const createPullRequest = async (repoFullName, testCode, testFileName, br
 
 // Get available frameworks
 export const getFrameworks = async () => {
-  const response = await api.get('/frameworks')
+  const response = await api.get(ENV.ENDPOINTS.FRAMEWORKS)
   return response.data
 }
 
 export const getFrameworksForFile = async (filePath) => {
-  const response = await api.get(`/frameworks/${filePath}`)
+  const response = await api.get(`${ENV.ENDPOINTS.FRAMEWORKS}/${filePath}`)
   return response.data
 }
 

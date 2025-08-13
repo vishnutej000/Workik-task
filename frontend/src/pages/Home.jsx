@@ -1,9 +1,12 @@
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { ENV } from '../config/env'
 import { Github, TestTube, Code, Zap, Shield, GitBranch } from 'lucide-react'
 
 const Home = () => {
-  const { login, isAuthenticated, user } = useAuth()
+  const { login, isAuthenticated, user, loading } = useAuth()
+  
+  console.log('🏠 Home component render:', { isAuthenticated, user: user?.login, loading })
 
   const features = [
     {
@@ -38,6 +41,18 @@ const Home = () => {
     }
   ]
 
+  // Show loading state
+  if (loading) {
+    return (
+      <div className="max-w-6xl mx-auto">
+        <div className="text-center py-16">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="max-w-6xl mx-auto">
       {/* Hero Section */}
@@ -46,7 +61,7 @@ const Home = () => {
           <TestTube className="h-16 w-16 text-blue-600" />
         </div>
         <h1 className="text-5xl font-bold text-gray-900 mb-6">
-          TestGen AI
+          {ENV.APP_NAME}
         </h1>
         <p className="text-xl text-gray-600 mb-8 max-w-3xl mx-auto">
           Generate comprehensive test cases for your code using AI. 
@@ -54,22 +69,40 @@ const Home = () => {
         </p>
         
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <Link
-            to="/analyze"
-            className="btn-primary text-lg px-8 py-3 inline-flex items-center space-x-2"
-          >
-            <Code className="h-5 w-5" />
-            <span>Analyze Repository</span>
-          </Link>
-          
-          {!isAuthenticated && (
-            <button
-              onClick={login}
-              className="btn-secondary text-lg px-8 py-3 inline-flex items-center space-x-2"
-            >
-              <Github className="h-5 w-5" />
-              <span>Login with GitHub</span>
-            </button>
+          {isAuthenticated ? (
+            <>
+              <Link
+                to="/dashboard"
+                className="btn-primary text-lg px-8 py-3 inline-flex items-center space-x-2"
+              >
+                <Github className="h-5 w-5" />
+                <span>My Repositories</span>
+              </Link>
+              <Link
+                to="/analyze"
+                className="btn-secondary text-lg px-8 py-3 inline-flex items-center space-x-2"
+              >
+                <Code className="h-5 w-5" />
+                <span>Analyze Public Repo</span>
+              </Link>
+            </>
+          ) : (
+            <>
+              <Link
+                to="/analyze"
+                className="btn-primary text-lg px-8 py-3 inline-flex items-center space-x-2"
+              >
+                <Code className="h-5 w-5" />
+                <span>Analyze Repository</span>
+              </Link>
+              <button
+                onClick={login}
+                className="btn-secondary text-lg px-8 py-3 inline-flex items-center space-x-2"
+              >
+                <Github className="h-5 w-5" />
+                <span>Login with GitHub</span>
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -77,20 +110,29 @@ const Home = () => {
       {/* Welcome Message for Authenticated Users */}
       {isAuthenticated && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-12">
-          <div className="flex items-center space-x-3">
-            <img
-              src={user.avatar_url}
-              alt={user.name || user.login}
-              className="h-12 w-12 rounded-full"
-            />
-            <div>
-              <h3 className="text-lg font-semibold text-blue-900">
-                Welcome back, {user.name || user.login}!
-              </h3>
-              <p className="text-blue-700">
-                You can now access your private repositories and create pull requests.
-              </p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <img
+                src={user.avatar_url}
+                alt={user.name || user.login}
+                className="h-12 w-12 rounded-full"
+              />
+              <div>
+                <h3 className="text-lg font-semibold text-blue-900">
+                  Welcome back, {user.name || user.login}!
+                </h3>
+                <p className="text-blue-700">
+                  You can now access your private repositories and create pull requests.
+                </p>
+              </div>
             </div>
+            <Link
+              to="/dashboard"
+              className="btn-primary inline-flex items-center space-x-2"
+            >
+              <Github className="h-4 w-4" />
+              <span>View My Repos</span>
+            </Link>
           </div>
         </div>
       )}

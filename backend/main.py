@@ -35,7 +35,11 @@ app = FastAPI(title="Test Case Generator API", version="1.0.0")
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("FRONTEND_URL", "http://localhost:5173")],
+    allow_origins=[
+        os.getenv("FRONTEND_URL", "http://localhost:5173"),
+        "http://localhost:5173",
+        "http://127.0.0.1:5173"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -95,6 +99,10 @@ class CreatePRRequest(BaseModel):
     branch_name: str
     commit_message: str
 
+class AuthCallbackRequest(BaseModel):
+    code: str
+    state: str
+
 class DirectRepoRequest(BaseModel):
     repo_url: str
 
@@ -119,6 +127,30 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+@app.get("/debug/ai-test")
+async def debug_ai_test():
+    """Debug endpoint to test AI generation"""
+    try:
+        messages = [
+            {"role": "system", "content": "You are a test engineer. Generate exactly 3 test case suggestions."},
+            {"role": "user", "content": "Generate 3 test cases for a simple calculator function. Format as: 1. Description 2. Description 3. Description"}
+        ]
+        
+        ai_response = await call_openrouter_api(messages)
+        
+        return {
+            "status": "success",
+            "ai_response": ai_response,
+            "response_length": len(ai_response),
+            "openrouter_key_set": bool(OPENROUTER_API_KEY)
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "openrouter_key_set": bool(OPENROUTER_API_KEY)
+        }
 
 # Helper functions
 def get_session_token(request: Request) -> Optional[str]:
@@ -161,49 +193,81 @@ async def github_login():
     return {"auth_url": github_auth_url}
 
 @app.post("/auth/callback")
-async def github_callback(code: str, state: str):
+async def github_callback(request_data: AuthCallbackRequest):
     """Handle GitHub OAuth callback"""
-    # Exchange code for access token
-    token_data = {
-        "client_id": GITHUB_CLIENT_ID,
-        "client_secret": GITHUB_CLIENT_SECRET,
-        "code": code
-    }
-    
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            "https://github.com/login/oauth/access_token",
-            data=token_data,
-            headers={"Accept": "application/json"}
-        )
+    try:
+        print(f"🔄 Processing callback...")
+        print(f"📝 Request data: code={request_data.code[:10] if request_data.code else 'None'}..., state={request_data.state[:10] if request_data.state else 'None'}...")
         
-        if response.status_code != 200:
-            raise HTTPException(status_code=400, detail="Failed to exchange code for token")
+        # Validate required environment variables
+        if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
+            print("❌ Missing GitHub credentials")
+            raise HTTPException(status_code=500, detail="GitHub OAuth not configured")
         
-        token_response = response.json()
-        github_token = token_response.get("access_token")
+        code = request_data.code
+        state = request_data.state
         
-        if not github_token:
-            raise HTTPException(status_code=400, detail="No access token received")
-    
-    # Get user info
-    user_info = await github_api_request("/user", github_token)
-    
-    # Create session
-    session_token = secrets.token_urlsafe(32)
-    sessions[session_token] = {
-        "github_token": github_token,
-        "user": user_info
-    }
-    
-    return {
-        "session_token": session_token,
-        "user": {
-            "login": user_info["login"],
-            "name": user_info.get("name"),
-            "avatar_url": user_info["avatar_url"]
+        if not code:
+            print("❌ No authorization code provided")
+            raise HTTPException(status_code=400, detail="Authorization code is required")
+        
+        # Exchange code for access token
+        token_data = {
+            "client_id": GITHUB_CLIENT_ID,
+            "client_secret": GITHUB_CLIENT_SECRET,
+            "code": code
         }
-    }
+        
+        print("📡 Exchanging code for token...")
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://github.com/login/oauth/access_token",
+                data=token_data,
+                headers={"Accept": "application/json"}
+            )
+            
+            print(f"GitHub token response status: {response.status_code}")
+            
+            if response.status_code != 200:
+                print(f"❌ GitHub token exchange failed: {response.text}")
+                raise HTTPException(status_code=400, detail=f"Failed to exchange code for token: {response.text}")
+            
+            token_response = response.json()
+            print(f"Token response keys: {list(token_response.keys())}")
+            
+            github_token = token_response.get("access_token")
+            
+            if not github_token:
+                error_description = token_response.get("error_description", "No access token received")
+                print(f"❌ No access token: {error_description}")
+                raise HTTPException(status_code=400, detail=f"GitHub OAuth error: {error_description}")
+        
+        print("👤 Getting user info...")
+        # Get user info
+        user_info = await github_api_request("/user", github_token)
+        print(f"✅ User authenticated: {user_info.get('login')}")
+        
+        # Create session
+        session_token = secrets.token_urlsafe(32)
+        sessions[session_token] = {
+            "github_token": github_token,
+            "user": user_info
+        }
+        
+        return {
+            "session_token": session_token,
+            "user": {
+                "login": user_info["login"],
+                "name": user_info.get("name"),
+                "avatar_url": user_info["avatar_url"]
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Unexpected error in callback: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Authentication failed: {str(e)}")
 
 @app.get("/auth/user")
 async def get_current_user(request: Request):
@@ -800,31 +864,97 @@ Generate 3-5 meaningful test case suggestions focusing on:
         {"role": "user", "content": user_message}
     ]
     
-    # Call AI API
-    ai_response = await call_openrouter_api(messages)
+    # Call AI API with fallback models
+    ai_response = None
+    models_to_try = [
+        "mistralai/mistral-7b-instruct",
+        "openai/gpt-3.5-turbo",
+        "anthropic/claude-3-haiku",
+        "meta-llama/llama-3-8b-instruct"
+    ]
     
-    # Parse response into suggestions
+    for model in models_to_try:
+        try:
+            print(f"🤖 Trying AI model: {model}")
+            ai_response = await call_openrouter_api(messages, model)
+            if ai_response and len(ai_response.strip()) > 50:
+                print(f"✅ Success with model: {model}")
+                break
+            else:
+                print(f"⚠️ Empty/short response from {model}")
+        except Exception as e:
+            print(f"❌ Error with model {model}: {str(e)}")
+            continue
+    
+    if not ai_response:
+        raise HTTPException(status_code=500, detail="All AI models failed to generate suggestions")
+    
+    # Parse response into suggestions with improved logic
     suggestions = []
     lines = ai_response.strip().split('\n')
     suggestion_id = 1
     
+    print(f"🔍 AI Response received: {len(lines)} lines")
+    print(f"Raw response: {ai_response[:200]}...")
+    
     for line in lines:
+        original_line = line
         line = line.strip()
-        if line and (line[0].isdigit() or line.startswith('-')):
-            # Remove numbering and clean up
-            clean_line = line
-            if line[0].isdigit():
-                clean_line = '. '.join(line.split('. ')[1:]) if '. ' in line else line[2:].strip()
+        
+        # More flexible parsing - look for various patterns
+        if line and len(line) > 10:  # Minimum length for a meaningful suggestion
+            clean_line = None
+            
+            # Pattern 1: "1. Test case description"
+            if line[0].isdigit() and '. ' in line:
+                clean_line = '. '.join(line.split('. ')[1:])
+            # Pattern 2: "1) Test case description"  
+            elif line[0].isdigit() and ') ' in line:
+                clean_line = ') '.join(line.split(') ')[1:])
+            # Pattern 3: "- Test case description"
             elif line.startswith('-'):
                 clean_line = line[1:].strip()
+            # Pattern 4: "* Test case description"
+            elif line.startswith('*'):
+                clean_line = line[1:].strip()
+            # Pattern 5: Just numbered at start "1 Test case description"
+            elif line[0].isdigit() and line[1] == ' ':
+                clean_line = line[2:].strip()
+            # Pattern 6: Any line that looks like a test description (contains "test" or "verify")
+            elif any(keyword in line.lower() for keyword in ['test', 'verify', 'check', 'validate', 'ensure']):
+                clean_line = line
             
-            if clean_line:
+            if clean_line and len(clean_line) > 10:
                 suggestions.append(TestSuggestion(
                     id=suggestion_id,
                     summary=clean_line,
                     framework=framework
                 ))
                 suggestion_id += 1
+                print(f"✅ Parsed suggestion {suggestion_id-1}: {clean_line[:50]}...")
+            else:
+                print(f"❌ Skipped line: {original_line[:50]}...")
+    
+    print(f"🎯 Total suggestions parsed: {len(suggestions)}")
+    
+    # Fallback: Generate basic suggestions if AI parsing failed
+    if len(suggestions) == 0:
+        print("🔄 No suggestions parsed, generating fallback suggestions...")
+        fallback_suggestions = [
+            f"Test basic functionality of {request_data.files[0]} with valid inputs",
+            f"Test error handling in {request_data.files[0]} with invalid inputs", 
+            f"Test edge cases and boundary conditions for {request_data.files[0]}",
+            f"Test integration points and dependencies in {request_data.files[0]}"
+        ]
+        
+        for i, summary in enumerate(fallback_suggestions, 1):
+            suggestions.append(TestSuggestion(
+                id=i,
+                summary=summary,
+                framework=framework
+            ))
+        
+        print(f"✅ Generated {len(suggestions)} fallback suggestions")
     
     # Store suggestions in session for later use
     if session_token in sessions:

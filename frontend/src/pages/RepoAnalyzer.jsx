@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { analyzeRepository } from '../services/api'
+import { ENV } from '../config/env'
 import { Github, Search, FileCode, Loader2, AlertCircle, CheckCircle } from 'lucide-react'
 
 const RepoAnalyzer = () => {

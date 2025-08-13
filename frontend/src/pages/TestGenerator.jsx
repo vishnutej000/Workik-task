@@ -7,10 +7,8 @@ import {
   getFrameworksForFile 
 } from '../services/api'
 import { useAuth } from '../context/AuthContext'
-import FileSelector from '../components/FileSelector'
-import FrameworkSelector from '../components/FrameworkSelector'
-import TestSuggestions from '../components/TestSuggestions'
-import CodeViewer from '../components/CodeViewer'
+import { ENV } from '../config/env'
+import { CONSTANTS } from '../config/constants'
 import { 
   TestTube, 
   ArrowLeft, 
@@ -18,7 +16,12 @@ import {
   AlertCircle, 
   CheckCircle,
   GitBranch,
-  Code
+  Code,
+  FileText,
+  CheckSquare,
+  Square,
+  Copy,
+  Download
 } from 'lucide-react'
 
 const TestGenerator = () => {
@@ -89,11 +92,23 @@ const TestGenerator = () => {
     setGeneratedCode(null)
 
     try {
-      const data = await generateTestSuggestions(
-        repoData.repoUrl,
-        selectedFiles,
-        selectedFramework
-      )
+      let data
+      if (isAuthenticated && repoData.repository?.full_name) {
+        // Use OAuth endpoint for authenticated users with repository access
+        const { generateSuggestionsOAuth } = await import('../services/api')
+        data = await generateSuggestionsOAuth(
+          selectedFiles,
+          repoData.repository.full_name,
+          selectedFramework
+        )
+      } else {
+        // Use direct endpoint for public repository analysis
+        data = await generateTestSuggestions(
+          repoData.repoUrl,
+          selectedFiles,
+          selectedFramework
+        )
+      }
       setSuggestions(data.suggestions || [])
       setSuccess(`Generated ${data.suggestions?.length || 0} test suggestions`)
     } catch (err) {
@@ -114,13 +129,27 @@ const TestGenerator = () => {
     setSelectedSuggestion(suggestion)
 
     try {
-      const data = await generateTestCode(
-        repoData.repoUrl,
-        suggestion.id,
-        suggestion.summary,
-        selectedFiles,
-        selectedFramework
-      )
+      let data
+      if (isAuthenticated && repoData.repository?.full_name) {
+        // Use OAuth endpoint for authenticated users with repository access
+        const { generateCodeOAuth } = await import('../services/api')
+        data = await generateCodeOAuth(
+          suggestion.id,
+          suggestion.summary,
+          selectedFiles,
+          repoData.repository.full_name,
+          selectedFramework
+        )
+      } else {
+        // Use direct endpoint for public repository analysis
+        data = await generateTestCode(
+          repoData.repoUrl,
+          suggestion.id,
+          suggestion.summary,
+          selectedFiles,
+          selectedFramework
+        )
+      }
       setGeneratedCode(data)
       setSuccess('Test code generated successfully!')
     } catch (err) {
@@ -137,6 +166,11 @@ const TestGenerator = () => {
   const handleCreatePR = async () => {
     if (!generatedCode || !isAuthenticated) {
       setError('Authentication required to create pull requests')
+      return
+    }
+
+    if (!repoData.repository?.full_name) {
+      setError('Pull requests can only be created for authenticated repository access')
       return
     }
 
@@ -231,18 +265,55 @@ const TestGenerator = () => {
         {/* Left Column - File Selection & Framework */}
         <div className="lg:col-span-1 space-y-6">
           {/* File Selection */}
-          <FileSelector
-            files={repoData.files}
-            selectedFiles={selectedFiles}
-            onSelectionChange={setSelectedFiles}
-          />
+          <div className="card">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              Select Files ({selectedFiles.length} selected)
+            </h3>
+            <div className="max-h-64 overflow-y-auto space-y-2">
+              {repoData.files?.slice(0, 20).map((file) => (
+                <div
+                  key={file.path}
+                  className="flex items-center space-x-2 p-2 hover:bg-gray-50 rounded cursor-pointer"
+                  onClick={() => {
+                    const isSelected = selectedFiles.includes(file.path)
+                    if (isSelected) {
+                      setSelectedFiles(selectedFiles.filter(f => f !== file.path))
+                    } else {
+                      setSelectedFiles([...selectedFiles, file.path])
+                    }
+                  }}
+                >
+                  {selectedFiles.includes(file.path) ? (
+                    <CheckSquare className="h-4 w-4 text-blue-600" />
+                  ) : (
+                    <Square className="h-4 w-4 text-gray-400" />
+                  )}
+                  <FileText className="h-4 w-4 text-gray-500" />
+                  <span className="text-sm text-gray-700 truncate">
+                    {file.path}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
 
           {/* Framework Selection */}
-          <FrameworkSelector
-            frameworks={availableFrameworks}
-            selectedFramework={selectedFramework}
-            onFrameworkChange={setSelectedFramework}
-          />
+          <div className="card">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              Testing Framework
+            </h3>
+            <select
+              value={selectedFramework}
+              onChange={(e) => setSelectedFramework(e.target.value)}
+              className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              {availableFrameworks.map((framework) => (
+                <option key={framework} value={framework}>
+                  {framework.charAt(0).toUpperCase() + framework.slice(1)}
+                </option>
+              ))}
+            </select>
+          </div>
 
           {/* Generate Suggestions Button */}
           <button
@@ -268,27 +339,101 @@ const TestGenerator = () => {
         <div className="lg:col-span-2 space-y-6">
           {/* Test Suggestions */}
           {suggestions.length > 0 && (
-            <TestSuggestions
-              suggestions={suggestions}
-              selectedSuggestion={selectedSuggestion}
-              onGenerateCode={handleGenerateCode}
-              loading={loadingCode}
-            />
+            <div className="card">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                Test Suggestions ({suggestions.length})
+              </h3>
+              <div className="space-y-3">
+                {suggestions.map((suggestion) => (
+                  <div
+                    key={suggestion.id}
+                    className={`p-4 border rounded-lg cursor-pointer transition-colors ${
+                      selectedSuggestion?.id === suggestion.id
+                        ? 'border-blue-500 bg-blue-50'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <h4 className="font-medium text-gray-900 mb-1">
+                          Test Case {suggestion.id}
+                        </h4>
+                        <p className="text-sm text-gray-600 mb-2">
+                          {suggestion.summary}
+                        </p>
+                        <span className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded">
+                          {suggestion.framework}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => handleGenerateCode(suggestion)}
+                        disabled={loadingCode}
+                        className="btn-primary text-sm ml-4"
+                      >
+                        {loadingCode && selectedSuggestion?.id === suggestion.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          'Generate Code'
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
 
           {/* Generated Code */}
           {generatedCode && (
-            <div className="space-y-4">
-              <CodeViewer
-                code={generatedCode.test_code}
-                filename={generatedCode.suggested_filename}
-                language={generatedCode.language}
-                framework={generatedCode.framework}
-              />
+            <div className="card space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Generated Test Code
+                </h3>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => navigator.clipboard.writeText(generatedCode.test_code)}
+                    className="btn-secondary text-sm flex items-center space-x-1"
+                  >
+                    <Copy className="h-4 w-4" />
+                    <span>Copy</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      const blob = new Blob([generatedCode.test_code], { type: 'text/plain' })
+                      const url = URL.createObjectURL(blob)
+                      const a = document.createElement('a')
+                      a.href = url
+                      a.download = generatedCode.suggested_filename
+                      a.click()
+                      URL.revokeObjectURL(url)
+                    }}
+                    className="btn-secondary text-sm flex items-center space-x-1"
+                  >
+                    <Download className="h-4 w-4" />
+                    <span>Download</span>
+                  </button>
+                </div>
+              </div>
+              
+              <div className="bg-gray-100 px-3 py-2 rounded-t border-b">
+                <span className="text-sm font-mono text-gray-700">
+                  {generatedCode.suggested_filename}
+                </span>
+                <span className="text-xs text-gray-500 ml-2">
+                  ({generatedCode.framework} • {generatedCode.language})
+                </span>
+              </div>
+              
+              <div className="bg-gray-50 p-4 rounded-b max-h-96 overflow-auto">
+                <pre className="text-sm text-gray-800 whitespace-pre-wrap font-mono">
+                  {generatedCode.test_code}
+                </pre>
+              </div>
 
               {/* Create PR Button */}
               {isAuthenticated && (
-                <div className="flex justify-end">
+                <div className="flex justify-end pt-4 border-t">
                   <button
                     onClick={handleCreatePR}
                     disabled={creatingPR}

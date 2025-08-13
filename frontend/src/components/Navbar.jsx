@@ -1,5 +1,6 @@
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { ENV } from '../config/env'
 import { Github, LogOut, TestTube, Code, Home } from 'lucide-react'
 
 const Navbar = () => {
@@ -15,7 +16,7 @@ const Navbar = () => {
           {/* Logo */}
           <Link to="/" className="flex items-center space-x-2">
             <TestTube className="h-8 w-8 text-blue-600" />
-            <span className="text-xl font-bold text-gray-900">TestGen AI</span>
+            <span className="text-xl font-bold text-gray-900">{ENV.APP_NAME}</span>
           </Link>
 
           {/* Navigation Links */}
@@ -31,6 +32,20 @@ const Navbar = () => {
               <Home className="h-4 w-4" />
               <span>Home</span>
             </Link>
+
+            {isAuthenticated && (
+              <Link
+                to="/dashboard"
+                className={`flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                  isActive('/dashboard') 
+                    ? 'text-blue-600 bg-blue-50' 
+                    : 'text-gray-700 hover:text-blue-600 hover:bg-gray-50'
+                }`}
+              >
+                <Github className="h-4 w-4" />
+                <span>My Repos</span>
+              </Link>
+            )}
             
             <Link
               to="/analyze"
