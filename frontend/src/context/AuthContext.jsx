@@ -40,7 +40,15 @@ export const AuthProvider = ({ children }) => {
         } catch (error) {
           console.error('❌ Auth check failed:', error)
           console.error('Error response:', error.response?.data)
-          logout()
+          
+          // If session is invalid (401) or server error (500), clear the session
+          if (error.response?.status === 401 || error.response?.status === 500) {
+            console.log('🧹 Clearing invalid session...')
+            logout()
+          } else {
+            // For network errors, don't logout but show as not authenticated
+            setUser(null)
+          }
         }
       } else {
         console.log('ℹ️ No session token found')
@@ -49,7 +57,7 @@ export const AuthProvider = ({ children }) => {
     }
 
     checkAuth()
-  }, [sessionToken])
+  }, [])
 
   const login = async () => {
     try {

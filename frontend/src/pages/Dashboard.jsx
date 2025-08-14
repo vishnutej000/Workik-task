@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { ENV } from '../config/env'
 import { CONSTANTS } from '../config/constants'
-import ApiDebugger from '../components/ApiDebugger'
+import SystemMonitor from '../components/SystemMonitor'
 import { 
   Github, 
   GitBranch, 
@@ -12,7 +12,7 @@ import {
   Unlock, 
   Calendar,
   Code,
-  TestTube,
+  Settings,
   Loader2,
   AlertCircle,
   ChevronDown,
@@ -368,7 +368,7 @@ const Dashboard = () => {
                     {loadingState === 'files' ? (
                       <Loader2 className="h-3 w-3 animate-spin" />
                     ) : (
-                      <TestTube className="h-3 w-3" />
+                      <Settings className="h-3 w-3" />
                     )}
                     <span>Generate Tests</span>
                     {isExpanded ? (
@@ -521,10 +521,10 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* API Debugger - Only show in development */}
+      {/* System Monitor - Only show in development */}
       {ENV.IS_DEV && (
         <div className="mt-8">
-          <ApiDebugger />
+          <SystemMonitor />
         </div>
       )}
     </div>

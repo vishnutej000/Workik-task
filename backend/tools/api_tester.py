@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Test script to verify backend endpoints are working
-Run with: python test_endpoints.py
+API Endpoint Tester
+Tests all backend API endpoints for functionality
 """
 
 import asyncio
@@ -13,10 +13,11 @@ import os
 # Load environment variables
 load_dotenv()
 
-async def test_endpoints():
+async def test_api_endpoints():
     """Test all backend endpoints"""
     
-    print("🔍 Testing Backend Endpoints...")
+    print("🔌 API Endpoint Tester")
+    print("=" * 50)
     print(f"Backend URL: http://localhost:8000")
     print()
     
@@ -113,7 +114,7 @@ async def test_endpoints():
         print(f"   ❌ Error: {str(e)}")
     
     print()
-    print("🎯 Endpoint testing complete!")
+    print("🎯 API Endpoint Testing Complete!")
     print()
     print("💡 If you see errors:")
     print("   1. Make sure the backend is running: python backend/run.py")
@@ -122,4 +123,4 @@ async def test_endpoints():
     print("   4. Check backend logs for detailed error messages")
 
 if __name__ == "__main__":
-    asyncio.run(test_endpoints())
+    asyncio.run(test_api_endpoints())

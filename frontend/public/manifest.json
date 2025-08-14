@@ -1,0 +1,17 @@
+{
+  "name": "GitHub Test Case Generator",
+  "short_name": "GitHub TestGen",
+  "description": "Generate comprehensive test cases for your GitHub repositories using AI",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0d1117",
+  "theme_color": "#238636",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -13,7 +13,7 @@ function App() {
   return (
     <AuthProvider>
       <Router>
-        <div className="min-h-screen bg-gray-50">
+        <div className="min-h-screen" style={{ backgroundColor: 'var(--gh-bg-primary)' }}>
           <Routes>
             {/* Auth callback route - no navbar */}
             <Route path="/auth/callback" element={<AuthCallback />} />

@@ -4,13 +4,15 @@ import {
   generateTestSuggestions, 
   generateTestCode, 
   createPullRequest,
-  getFrameworksForFile 
+  getFrameworksForFile,
+  generateSuggestionsOAuth,
+  generateCodeOAuth
 } from '../services/api'
 import { useAuth } from '../context/AuthContext'
 import { ENV } from '../config/env'
 import { CONSTANTS } from '../config/constants'
 import { 
-  TestTube, 
+  Settings, 
   ArrowLeft, 
   Loader2, 
   AlertCircle, 
@@ -31,8 +33,7 @@ const TestGenerator = () => {
   // Repository data
   const [repoData, setRepoData] = useState(null)
   const [selectedFiles, setSelectedFiles] = useState([])
-  const [selectedFramework, setSelectedFramework] = useState('')
-  const [availableFrameworks, setAvailableFrameworks] = useState([])
+  const [detectedFramework, setDetectedFramework] = useState('')
   
   // Test generation states
   const [suggestions, setSuggestions] = useState([])
@@ -54,30 +55,62 @@ const TestGenerator = () => {
     if (storedData) {
       const data = JSON.parse(storedData)
       setRepoData(data)
+      
+      // Handle different generation modes
+      if (data.generateMode === 'all' && data.preSelectedFiles) {
+        // Pre-select all files for whole repository mode
+        setSelectedFiles(data.preSelectedFiles)
+        console.log('🎯 Whole repository mode: Pre-selected', data.preSelectedFiles.length, 'files')
+      } else {
+        console.log('📝 Individual file selection mode')
+      }
     } else {
       navigate('/analyze')
     }
   }, [navigate])
 
-  // Update available frameworks when files are selected
+  // Auto-detect framework when files are selected
   useEffect(() => {
-    const updateFrameworks = async () => {
+    const detectFramework = async () => {
       if (selectedFiles.length > 0) {
         try {
           const response = await getFrameworksForFile(selectedFiles[0])
-          setAvailableFrameworks(response.available_frameworks || [])
-          setSelectedFramework(response.default_framework || '')
+          setDetectedFramework(response.default_framework || 'pytest')
         } catch (err) {
-          console.error('Failed to get frameworks:', err)
-          // Fallback frameworks
-          setAvailableFrameworks(['selenium', 'jest', 'pytest', 'junit'])
-          setSelectedFramework('selenium')
+          console.error('Failed to detect framework:', err)
+          // Auto-detect based on file extension
+          const firstFile = selectedFiles[0]
+          const ext = firstFile.split('.').pop()?.toLowerCase()
+          
+          if (['js', 'jsx', 'ts', 'tsx'].includes(ext)) {
+            setDetectedFramework('jest')
+          } else if (['py'].includes(ext)) {
+            setDetectedFramework('pytest')
+          } else if (['java'].includes(ext)) {
+            setDetectedFramework('junit')
+          } else {
+            setDetectedFramework('pytest')
+          }
         }
       }
     }
 
-    updateFrameworks()
+    detectFramework()
   }, [selectedFiles])
+
+  // Auto-generate tests when files are pre-selected (for "Generate All Tests" mode)
+  useEffect(() => {
+    const autoGenerateTests = async () => {
+      if (repoData?.generateMode === 'all' && selectedFiles.length > 0 && detectedFramework && !loadingSuggestions && suggestions.length === 0) {
+        console.log('🚀 Auto-generating tests for whole repository...')
+        await handleGenerateSuggestions()
+      }
+    }
+
+    // Small delay to ensure framework detection is complete
+    const timer = setTimeout(autoGenerateTests, 1000)
+    return () => clearTimeout(timer)
+  }, [repoData, selectedFiles, detectedFramework, loadingSuggestions, suggestions.length])
 
   const handleGenerateSuggestions = async () => {
     if (selectedFiles.length === 0) {
@@ -95,18 +128,17 @@ const TestGenerator = () => {
       let data
       if (isAuthenticated && repoData.repository?.full_name) {
         // Use OAuth endpoint for authenticated users with repository access
-        const { generateSuggestionsOAuth } = await import('../services/api')
         data = await generateSuggestionsOAuth(
           selectedFiles,
           repoData.repository.full_name,
-          selectedFramework
+          detectedFramework
         )
       } else {
         // Use direct endpoint for public repository analysis
         data = await generateTestSuggestions(
           repoData.repoUrl,
           selectedFiles,
-          selectedFramework
+          detectedFramework
         )
       }
       setSuggestions(data.suggestions || [])
@@ -132,13 +164,12 @@ const TestGenerator = () => {
       let data
       if (isAuthenticated && repoData.repository?.full_name) {
         // Use OAuth endpoint for authenticated users with repository access
-        const { generateCodeOAuth } = await import('../services/api')
         data = await generateCodeOAuth(
           suggestion.id,
           suggestion.summary,
           selectedFiles,
           repoData.repository.full_name,
-          selectedFramework
+          detectedFramework
         )
       } else {
         // Use direct endpoint for public repository analysis
@@ -147,7 +178,7 @@ const TestGenerator = () => {
           suggestion.id,
           suggestion.summary,
           selectedFiles,
-          selectedFramework
+          detectedFramework
         )
       }
       setGeneratedCode(data)
@@ -235,11 +266,23 @@ const TestGenerator = () => {
             <span>Back to Analyzer</span>
           </button>
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Test Generator</h1>
+            <div className="flex items-center space-x-3">
+              <h1 className="text-3xl font-bold text-gray-900">Test Generator</h1>
+              {repoData?.generateMode === 'all' && (
+                <span className="px-3 py-1 bg-blue-100 text-blue-800 text-sm font-medium rounded-full">
+                  Whole Repository
+                </span>
+              )}
+            </div>
             <p className="text-gray-600">{repoData.repository.full_name}</p>
+            {repoData?.generateMode === 'all' && (
+              <p className="text-sm text-blue-600 mt-1">
+                All {repoData.files?.length || 0} files pre-selected for testing
+              </p>
+            )}
           </div>
         </div>
-        <TestTube className="h-8 w-8 text-blue-600" />
+        <Settings className="h-8 w-8 text-blue-600" />
       </div>
 
       {/* Status Messages */}
@@ -266,73 +309,101 @@ const TestGenerator = () => {
         <div className="lg:col-span-1 space-y-6">
           {/* File Selection */}
           <div className="card">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              Select Files ({selectedFiles.length} selected)
-            </h3>
-            <div className="max-h-64 overflow-y-auto space-y-2">
-              {repoData.files?.slice(0, 20).map((file) => (
-                <div
-                  key={file.path}
-                  className="flex items-center space-x-2 p-2 hover:bg-gray-50 rounded cursor-pointer"
-                  onClick={() => {
-                    const isSelected = selectedFiles.includes(file.path)
-                    if (isSelected) {
-                      setSelectedFiles(selectedFiles.filter(f => f !== file.path))
-                    } else {
-                      setSelectedFiles([...selectedFiles, file.path])
-                    }
-                  }}
-                >
-                  {selectedFiles.includes(file.path) ? (
-                    <CheckSquare className="h-4 w-4 text-blue-600" />
-                  ) : (
-                    <Square className="h-4 w-4 text-gray-400" />
-                  )}
-                  <FileText className="h-4 w-4 text-gray-500" />
-                  <span className="text-sm text-gray-700 truncate">
-                    {file.path}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Framework Selection */}
-          <div className="card">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              Testing Framework
-            </h3>
-            <select
-              value={selectedFramework}
-              onChange={(e) => setSelectedFramework(e.target.value)}
-              className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              {availableFrameworks.map((framework) => (
-                <option key={framework} value={framework}>
-                  {framework.charAt(0).toUpperCase() + framework.slice(1)}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Generate Suggestions Button */}
-          <button
-            onClick={handleGenerateSuggestions}
-            disabled={loadingSuggestions || selectedFiles.length === 0}
-            className="btn-primary w-full flex items-center justify-center space-x-2"
-          >
-            {loadingSuggestions ? (
+            {repoData?.generateMode === 'all' ? (
+              // Whole Repository Mode - Show summary instead of selection
               <>
-                <Loader2 className="h-5 w-5 animate-spin" />
-                <span>Generating...</span>
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                  Repository Files ({selectedFiles.length} files)
+                </h3>
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                  <div className="flex items-center space-x-2">
+                    <Zap className="h-5 w-5 text-blue-600" />
+                    <p className="text-blue-800 font-medium">
+                      Whole Repository Mode Active
+                    </p>
+                  </div>
+                  <p className="text-blue-700 text-sm mt-1">
+                    All {selectedFiles.length} code files have been automatically selected for test generation.
+                  </p>
+                </div>
+                {loadingSuggestions && (
+                  <div className="text-center py-4">
+                    <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2 text-blue-600" />
+                    <p className="text-gray-600">Analyzing repository and generating test suggestions...</p>
+                  </div>
+                )}
               </>
             ) : (
+              // Individual Selection Mode - Show file checkboxes
               <>
-                <TestTube className="h-5 w-5" />
-                <span>Generate Test Suggestions</span>
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                  Select Files ({selectedFiles.length} selected)
+                </h3>
+                <div className="max-h-64 overflow-y-auto space-y-2">
+                  {repoData.files?.slice(0, 20).map((file) => (
+                    <div
+                      key={file.path}
+                      className="flex items-center space-x-2 p-2 hover:bg-gray-50 rounded cursor-pointer"
+                      onClick={() => {
+                        const isSelected = selectedFiles.includes(file.path)
+                        if (isSelected) {
+                          setSelectedFiles(selectedFiles.filter(f => f !== file.path))
+                        } else {
+                          setSelectedFiles([...selectedFiles, file.path])
+                        }
+                      }}
+                    >
+                      {selectedFiles.includes(file.path) ? (
+                        <CheckSquare className="h-4 w-4 text-blue-600" />
+                      ) : (
+                        <Square className="h-4 w-4 text-gray-400" />
+                      )}
+                      <FileText className="h-4 w-4 text-gray-500" />
+                      <span className="text-sm text-gray-700 truncate">
+                        {file.path}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </>
             )}
-          </button>
+          </div>
+
+          {/* Detected Framework */}
+          {detectedFramework && (
+            <div className="card">
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                Testing Framework
+              </h3>
+              <div className="flex items-center space-x-2">
+                <div className="px-3 py-2 bg-green-100 text-green-800 rounded-md font-medium">
+                  {detectedFramework.charAt(0).toUpperCase() + detectedFramework.slice(1)}
+                </div>
+                <span className="text-sm text-gray-600">Auto-detected</span>
+              </div>
+            </div>
+          )}
+
+          {/* Generate Suggestions Button - Only show in individual selection mode */}
+          {repoData?.generateMode !== 'all' && (
+            <button
+              onClick={handleGenerateSuggestions}
+              disabled={loadingSuggestions || selectedFiles.length === 0}
+              className="btn-primary w-full flex items-center justify-center space-x-2"
+            >
+              {loadingSuggestions ? (
+                <>
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  <span>Generating...</span>
+                </>
+              ) : (
+                <>
+                  <Settings className="h-5 w-5" />
+                  <span>Generate Test Suggestions</span>
+                </>
+              )}
+            </button>
+          )}
         </div>
 
         {/* Right Column - Suggestions & Code */}
@@ -472,7 +543,10 @@ const TestGenerator = () => {
                 Ready to Generate Tests
               </h3>
               <p className="text-gray-600">
-                Select files and click "Generate Test Suggestions" to get started
+                {repoData?.generateMode === 'all' 
+                  ? 'Test suggestions will be generated automatically for all repository files'
+                  : 'Select files and click "Generate Test Suggestions" to get started'
+                }
               </p>
             </div>
           )}

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * Simple test to check if the frontend can be imported without errors
+ * Build Validator
+ * Validates that the frontend can be built without errors
  */
 
 import { readFileSync } from 'fs'
@@ -11,7 +12,8 @@ import { fileURLToPath } from 'url'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 
-console.log('🧪 Testing frontend build compatibility...\n')
+console.log('🏗️ Build Validator')
+console.log('=' + '='.repeat(49))
 
 // Test environment configuration
 try {
@@ -31,7 +33,7 @@ try {
 
 // Check package.json
 try {
-  const packageJson = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf-8'))
+  const packageJson = JSON.parse(readFileSync(join(__dirname, '../package.json'), 'utf-8'))
   console.log('✅ Package.json is valid')
   console.log(`   📦 Name: ${packageJson.name}`)
   console.log(`   📦 Version: ${packageJson.version}`)
@@ -42,11 +44,11 @@ try {
 
 // Check environment files
 try {
-  const envExample = readFileSync(join(__dirname, '.env.example'), 'utf-8')
+  const envExample = readFileSync(join(__dirname, '../.env.example'), 'utf-8')
   console.log('✅ Environment example file exists')
   
   try {
-    const env = readFileSync(join(__dirname, '.env'), 'utf-8')
+    const env = readFileSync(join(__dirname, '../.env'), 'utf-8')
     console.log('✅ Environment file exists')
   } catch {
     console.log('⚠️  Environment file (.env) not found - copy from .env.example')
@@ -56,9 +58,11 @@ try {
   process.exit(1)
 }
 
-console.log('\n🎉 All tests passed! Frontend is ready for development.')
-console.log('\n📋 Next steps:')
+console.log()
+console.log('🎉 All tests passed! Frontend is ready for development.')
+console.log()
+console.log('📋 Next steps:')
 console.log('   1. Copy .env.example to .env if not done already')
 console.log('   2. Run "npm run dev" to start development server')
-console.log('   3. Run "npm run validate" to check imports')
+console.log('   3. Run "npm run validate-imports" to check imports')
 console.log('   4. Run "npm run build" to build for production')

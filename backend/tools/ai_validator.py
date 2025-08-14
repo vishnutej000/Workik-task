@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Debug script to test the AI suggestion generation
-Run with: python debug_suggestions.py
+AI Test Suggestion Validator
+Validates AI model responses and suggestion generation
 """
 
 import asyncio
@@ -13,11 +13,11 @@ import os
 # Load environment variables
 load_dotenv()
 
-async def test_ai_generation():
-    """Test AI generation with sample data"""
+async def validate_ai_generation():
+    """Validate AI generation with sample data"""
     
-    print("🧪 Testing AI Test Suggestion Generation...")
-    print()
+    print("🤖 AI Test Suggestion Validator")
+    print("=" * 50)
     
     # Check if OpenRouter API key is set
     api_key = os.getenv("OPENROUTER_API_KEY")
@@ -82,7 +82,7 @@ Generate 3-5 meaningful test case suggestions focusing on:
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
         "HTTP-Referer": "http://localhost:8000",
-        "X-Title": "Test Case Generator Debug"
+        "X-Title": "GitHub Test Case Generator"
     }
     
     payload = {
@@ -131,26 +131,23 @@ Generate 3-5 meaningful test case suggestions focusing on:
                 line = line.strip()
                 print(f"Line {i+1}: '{line}' -> ", end="")
                 
-                if line and (line[0].isdigit() or line.startswith('-')):
-                    # Remove numbering and clean up
-                    clean_line = line
-                    if line[0].isdigit():
-                        clean_line = '. '.join(line.split('. ')[1:]) if '. ' in line else line[2:].strip()
-                    elif line.startswith('-'):
-                        clean_line = line[1:].strip()
+                # Only capture main numbered test case summaries, not sub-items
+                if line and line[0].isdigit() and '. ' in line and 'Test case summary:' in line:
+                    # Remove numbering and "Test case summary:" prefix
+                    clean_line = line.split('Test case summary: ')[1] if 'Test case summary: ' in line else line.split('. ')[1]
                     
                     if clean_line:
                         suggestions.append({
                             "id": suggestion_id,
-                            "summary": clean_line,
+                            "summary": clean_line.strip(),
                             "framework": "pytest"
                         })
                         suggestion_id += 1
-                        print(f"✅ Parsed as suggestion: '{clean_line}'")
+                        print(f"✅ Parsed as suggestion: '{clean_line.strip()}'")
                     else:
                         print("❌ Empty after cleaning")
                 else:
-                    print("❌ Doesn't match pattern")
+                    print("❌ Doesn't match pattern (not a main test case)")
             
             print()
             print(f"🎯 Final Results: {len(suggestions)} suggestions parsed")
@@ -160,7 +157,7 @@ Generate 3-5 meaningful test case suggestions focusing on:
             
             if len(suggestions) == 0:
                 print()
-                print("🔧 Debugging Tips:")
+                print("🔧 Troubleshooting Tips:")
                 print("   1. Check if AI response follows the expected format")
                 print("   2. Try a different AI model (e.g., 'openai/gpt-3.5-turbo')")
                 print("   3. Adjust the prompt to be more specific about formatting")
@@ -170,4 +167,4 @@ Generate 3-5 meaningful test case suggestions focusing on:
         print(f"❌ Error: {str(e)}")
 
 if __name__ == "__main__":
-    asyncio.run(test_ai_generation())
+    asyncio.run(validate_ai_generation())

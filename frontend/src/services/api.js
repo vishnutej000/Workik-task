@@ -34,10 +34,18 @@ api.interceptors.response.use(
       message: error.message
     })
 
+    // Handle authentication errors
     if (error.response?.status === 401) {
+      console.log('🔒 Authentication failed - clearing session')
       localStorage.removeItem('sessionToken')
-      window.location.href = '/'
+      delete axios.defaults.headers.common['Authorization']
+      
+      // Only redirect if not already on home page
+      if (window.location.pathname !== '/') {
+        window.location.href = '/'
+      }
     }
+    
     return Promise.reject(error)
   }
 )

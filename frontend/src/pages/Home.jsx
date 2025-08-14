@@ -1,7 +1,8 @@
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { ENV } from '../config/env'
-import { Github, TestTube, Code, Zap, Shield, GitBranch } from 'lucide-react'
+import { Github, Code, Zap, Shield, GitBranch, Settings } from 'lucide-react'
+import AppIcon from '../components/AppIcon'
 
 const Home = () => {
   const { login, isAuthenticated, user, loading } = useAuth()
@@ -15,7 +16,7 @@ const Home = () => {
       description: "Connect with GitHub repositories and analyze code files automatically"
     },
     {
-      icon: <TestTube className="h-8 w-8 text-green-600" />,
+      icon: <Settings className="h-8 w-8 text-green-600" />,
       title: "Multi-Framework Support",
       description: "Generate tests for Selenium, Jest, pytest, JUnit, Cypress, and more"
     },
@@ -58,12 +59,12 @@ const Home = () => {
       {/* Hero Section */}
       <div className="text-center py-16">
         <div className="flex justify-center mb-6">
-          <TestTube className="h-16 w-16 text-blue-600" />
+          <AppIcon size="xl" />
         </div>
-        <h1 className="text-5xl font-bold text-gray-900 mb-6">
+        <h1 className="text-5xl font-bold mb-6" style={{ color: 'var(--gh-text-primary)' }}>
           {ENV.APP_NAME}
         </h1>
-        <p className="text-xl text-gray-600 mb-8 max-w-3xl mx-auto">
+        <p className="text-xl mb-8 max-w-3xl mx-auto" style={{ color: 'var(--gh-text-secondary)' }}>
           Generate comprehensive test cases for your code using AI. 
           Support for multiple frameworks including Selenium, Jest, pytest, and more.
         </p>
@@ -87,41 +88,33 @@ const Home = () => {
               </Link>
             </>
           ) : (
-            <>
-              <Link
-                to="/analyze"
-                className="btn-primary text-lg px-8 py-3 inline-flex items-center space-x-2"
-              >
-                <Code className="h-5 w-5" />
-                <span>Analyze Repository</span>
-              </Link>
-              <button
-                onClick={login}
-                className="btn-secondary text-lg px-8 py-3 inline-flex items-center space-x-2"
-              >
-                <Github className="h-5 w-5" />
-                <span>Login with GitHub</span>
-              </button>
-            </>
+            <Link
+              to="/analyze"
+              className="btn-primary text-lg px-8 py-3 inline-flex items-center space-x-2"
+            >
+              <Code className="h-5 w-5" />
+              <span>Analyze Repository</span>
+            </Link>
           )}
         </div>
       </div>
 
       {/* Welcome Message for Authenticated Users */}
       {isAuthenticated && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-12">
+        <div className="card mb-12" style={{ backgroundColor: 'rgba(35, 134, 54, 0.1)', borderColor: 'var(--gh-accent-primary)' }}>
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
               <img
                 src={user.avatar_url}
                 alt={user.name || user.login}
-                className="h-12 w-12 rounded-full"
+                className="h-12 w-12 rounded-full border-2"
+                style={{ borderColor: 'var(--gh-accent-primary)' }}
               />
               <div>
-                <h3 className="text-lg font-semibold text-blue-900">
+                <h3 className="text-lg font-semibold" style={{ color: 'var(--gh-text-primary)' }}>
                   Welcome back, {user.name || user.login}!
                 </h3>
-                <p className="text-blue-700">
+                <p style={{ color: 'var(--gh-text-secondary)' }}>
                   You can now access your private repositories and create pull requests.
                 </p>
               </div>
@@ -215,29 +208,7 @@ const Home = () => {
         </div>
       </div>
 
-      {/* Supported Frameworks */}
-      <div className="py-16">
-        <h2 className="text-3xl font-bold text-center text-gray-900 mb-12">
-          Supported Testing Frameworks
-        </h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6">
-          {[
-            { name: 'Selenium', color: 'bg-green-100 text-green-800' },
-            { name: 'Jest', color: 'bg-red-100 text-red-800' },
-            { name: 'pytest', color: 'bg-blue-100 text-blue-800' },
-            { name: 'JUnit', color: 'bg-orange-100 text-orange-800' },
-            { name: 'Cypress', color: 'bg-gray-100 text-gray-800' },
-            { name: 'Playwright', color: 'bg-purple-100 text-purple-800' }
-          ].map((framework, index) => (
-            <div
-              key={index}
-              className={`${framework.color} px-4 py-2 rounded-lg text-center font-medium`}
-            >
-              {framework.name}
-            </div>
-          ))}
-        </div>
-      </div>
+
     </div>
   )
 }

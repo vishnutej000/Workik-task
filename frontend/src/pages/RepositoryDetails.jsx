@@ -9,25 +9,26 @@ import {
   Folder,
   FileText,
   Code,
-  TestTube,
   Loader2,
   AlertCircle,
   Eye,
-  Download,
-  Calendar,
-  Star,
-  GitBranch,
   Lock,
   Unlock,
   ChevronDown,
-  ChevronRight
+  ChevronRight,
+  Settings,
+  CheckSquare,
+  Square,
+  Copy
 } from 'lucide-react'
 import axios from 'axios'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 
 const RepositoryDetails = () => {
   const { repoPath } = useParams() // Format: owner%2Frepo
   const navigate = useNavigate()
-  const { user, sessionToken } = useAuth()
+  const { sessionToken } = useAuth()
 
   const [repository, setRepository] = useState(null)
   const [files, setFiles] = useState([])
@@ -37,6 +38,8 @@ const RepositoryDetails = () => {
   const [selectedFile, setSelectedFile] = useState(null)
   const [fileContent, setFileContent] = useState('')
   const [loadingContent, setLoadingContent] = useState(false)
+  const [selectedFilesForTests, setSelectedFilesForTests] = useState([])
+  const [showTestSelection, setShowTestSelection] = useState(false)
 
   // Parse repository path
   const fullRepoName = decodeURIComponent(repoPath.replace('%2F', '/'))
@@ -195,7 +198,7 @@ const RepositoryDetails = () => {
                   <ChevronRight className="h-3 w-3 text-gray-500" />
                 )}
                 <Folder className="h-4 w-4 text-blue-600" />
-                <span className="text-sm text-gray-900">{value.name}</span>
+                <span className="text-sm" style={{ color: 'var(--gh-text-primary)' }}>{value.name}</span>
                 <span className="text-xs text-gray-500">
                   ({getDirectoryFileCount(value)})
                 </span>
@@ -211,19 +214,44 @@ const RepositoryDetails = () => {
       node._files
         .sort((a, b) => a.name.localeCompare(b.name))
         .forEach(file => {
+          const isCodeFile = CONSTANTS.FILE_TYPES.CODE_EXTENSIONS.includes(
+            file.name.split('.').pop()?.toLowerCase()
+          )
+          
           items.push(
             <div
               key={file.path}
-              className={`flex items-center justify-between p-1 hover:bg-gray-50 rounded cursor-pointer transition-colors ${selectedFile === file.path ? 'bg-blue-50 border-l-2 border-blue-500' : ''
+              className={`flex items-center justify-between p-1 hover:bg-gray-50 rounded transition-colors ${selectedFile === file.path ? 'bg-blue-50 border-l-2 border-blue-500' : ''
                 }`}
               style={{ paddingLeft: `${(level + 1) * 16 + 8}px` }}
-              onClick={() => fetchFileContent(file.path)}
             >
               <div className="flex items-center space-x-2 flex-1 min-w-0">
-                {getFileIcon(file.name)}
-                <span className="text-sm text-gray-900 truncate">
-                  {file.name}
-                </span>
+                {/* Test Selection Checkbox - Only for code files */}
+                {showTestSelection && isCodeFile && (
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      toggleFileSelection(file.path)
+                    }}
+                    className="cursor-pointer"
+                  >
+                    {selectedFilesForTests.includes(file.path) ? (
+                      <CheckSquare className="h-4 w-4 text-blue-600" />
+                    ) : (
+                      <Square className="h-4 w-4 text-gray-400" />
+                    )}
+                  </div>
+                )}
+                
+                <div
+                  className="flex items-center space-x-2 flex-1 min-w-0 cursor-pointer"
+                  onClick={() => fetchFileContent(file.path)}
+                >
+                  {getFileIcon(file.name)}
+                  <span className="text-sm truncate" style={{ color: 'var(--gh-text-primary)' }}>
+                    {file.name}
+                  </span>
+                </div>
               </div>
 
               <div className="flex items-center space-x-2 text-xs text-gray-500">
@@ -274,12 +302,91 @@ const RepositoryDetails = () => {
     return count
   }
 
+  const toggleFileSelection = (filePath) => {
+    setSelectedFilesForTests(prev => {
+      if (prev.includes(filePath)) {
+        return prev.filter(f => f !== filePath)
+      } else {
+        return [...prev, filePath]
+      }
+    })
+  }
+
+  const handleGenerateTests = () => {
+    if (selectedFilesForTests.length === 0) {
+      alert('Please select at least one file for test generation')
+      return
+    }
+
+    // Create repository data structure similar to RepoAnalyzer
+    const repoData = {
+      repository: repository,
+      files: files.filter(file => selectedFilesForTests.includes(file.path)),
+      total_files: selectedFilesForTests.length,
+      generateMode: 'selective',
+      preSelectedFiles: selectedFilesForTests
+    }
+
+    // Store in sessionStorage and navigate to test generator
+    sessionStorage.setItem('repoData', JSON.stringify({
+      repoUrl: repository.html_url,
+      ...repoData
+    }))
+
+    navigate('/generate')
+  }
+
+  const getFileLanguage = (fileName) => {
+    const ext = fileName.split('.').pop()?.toLowerCase()
+    const languageMap = {
+      'js': 'javascript',
+      'jsx': 'jsx',
+      'ts': 'typescript',
+      'tsx': 'tsx',
+      'py': 'python',
+      'java': 'java',
+      'go': 'go',
+      'rb': 'ruby',
+      'php': 'php',
+      'cpp': 'cpp',
+      'c': 'c',
+      'cs': 'csharp',
+      'html': 'html',
+      'css': 'css',
+      'scss': 'scss',
+      'sass': 'sass',
+      'json': 'json',
+      'xml': 'xml',
+      'yaml': 'yaml',
+      'yml': 'yaml',
+      'md': 'markdown',
+      'sh': 'bash',
+      'bash': 'bash',
+      'sql': 'sql',
+      'dockerfile': 'dockerfile',
+      'vue': 'vue',
+      'svelte': 'svelte',
+      'kt': 'kotlin',
+      'swift': 'swift',
+      'rust': 'rust',
+      'rs': 'rust'
+    }
+    return languageMap[ext] || 'text'
+  }
+
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text).then(() => {
+      // Could add a toast notification here
+      console.log('Code copied to clipboard')
+    })
+  }
+
   if (loading) {
     return (
       <div className="max-w-6xl mx-auto">
         <div className="text-center py-16">
           <Loader2 className="h-12 w-12 animate-spin text-blue-600 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">
+          <h2 className="text-xl font-semibold mb-2" style={{ color: 'var(--gh-text-primary)' }}>
             Loading Repository Details
           </h2>
           <p className="text-gray-600">
@@ -295,7 +402,7 @@ const RepositoryDetails = () => {
       <div className="max-w-6xl mx-auto">
         <div className="text-center py-16">
           <AlertCircle className="h-12 w-12 text-red-600 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">
+          <h2 className="text-xl font-semibold mb-2" style={{ color: 'var(--gh-text-primary)' }}>
             Error Loading Repository
           </h2>
           <p className="text-red-600 mb-4">{error}</p>
@@ -351,14 +458,6 @@ const RepositoryDetails = () => {
         </div>
 
         <div className="flex items-center space-x-3">
-          <Link
-            to={`/generate?repo=${encodeURIComponent(repository.full_name)}&auth=true`}
-            className="btn-primary inline-flex items-center space-x-2"
-          >
-            <TestTube className="h-4 w-4" />
-            <span>Generate Tests</span>
-          </Link>
-
           <a
             href={repository.html_url}
             target="_blank"
@@ -411,18 +510,32 @@ const RepositoryDetails = () => {
 
       <div className="grid lg:grid-cols-3 gap-6">
         {/* File Browser */}
-        <div className="lg:col-span-2">
-          <div className="card">
+        <div className="lg:col-span-1">
+          <div className="card h-full">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900">
-                Repository Files
-              </h2>
-              <span className="text-sm text-gray-500">
-                {files.length} files total
-              </span>
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">
+                  Repository Files
+                </h2>
+                {showTestSelection && (
+                  <p className="text-sm text-blue-600 mt-1">
+                    Click checkboxes next to code files to select them for testing
+                  </p>
+                )}
+              </div>
+              <div className="text-right">
+                <span className="text-sm text-gray-500">
+                  {files.length} files total
+                </span>
+                {showTestSelection && selectedFilesForTests.length > 0 && (
+                  <div className="text-xs text-blue-600 mt-1">
+                    {selectedFilesForTests.length} selected for testing
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div className="max-h-96 overflow-y-auto">
+            <div className="overflow-y-auto">
               <div className="space-y-1">
                 {renderFileTree(fileTree)}
               </div>
@@ -431,8 +544,8 @@ const RepositoryDetails = () => {
         </div>
 
         {/* File Content Viewer */}
-        <div className="lg:col-span-1">
-          <div className="card">
+        <div className="lg:col-span-2">
+          <div className="card h-full">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-gray-900">
                 File Preview
@@ -455,24 +568,72 @@ const RepositoryDetails = () => {
                 <p className="text-sm text-gray-600">Loading file content...</p>
               </div>
             ) : selectedFile ? (
-              <div>
-                <div className="bg-gray-100 px-3 py-2 rounded-t border-b">
-                  <span className="text-sm font-mono text-gray-700">
-                    {selectedFile}
-                  </span>
+              <div className="border rounded-lg overflow-hidden" style={{ borderColor: 'var(--gh-border-primary)' }}>
+                {/* File Header */}
+                <div className="px-4 py-3 border-b flex items-center justify-between" style={{ 
+                  backgroundColor: 'var(--gh-bg-tertiary)', 
+                  borderColor: 'var(--gh-border-primary)' 
+                }}>
+                  <div className="flex items-center space-x-2">
+                    {getFileIcon(selectedFile)}
+                    <span className="text-sm font-mono font-medium" style={{ color: 'var(--gh-text-primary)' }}>
+                      {selectedFile}
+                    </span>
+                    <span className="text-xs px-2 py-1 rounded" style={{ 
+                      backgroundColor: 'var(--gh-bg-overlay)', 
+                      color: 'var(--gh-text-secondary)' 
+                    }}>
+                      {getFileLanguage(selectedFile)}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => copyToClipboard(fileContent)}
+                    className="flex items-center space-x-1 text-xs px-2 py-1 rounded"
+                    style={{ 
+                      color: 'var(--gh-text-tertiary)',
+                      ':hover': { 
+                        color: 'var(--gh-text-primary)', 
+                        backgroundColor: 'var(--gh-bg-overlay)' 
+                      }
+                    }}
+                    title="Copy to clipboard"
+                  >
+                    <Copy className="h-3 w-3" />
+                    <span>Copy</span>
+                  </button>
                 </div>
-                <div className="bg-gray-50 p-4 rounded-b max-h-80 overflow-auto">
-                  <pre className="text-xs text-gray-800 whitespace-pre-wrap font-mono">
-                    {fileContent.length > CONSTANTS.UI.MAX_FILE_PREVIEW_SIZE
-                      ? fileContent.substring(0, CONSTANTS.UI.MAX_FILE_PREVIEW_SIZE) + '\n\n... (truncated, view full file on GitHub)'
-                      : fileContent
-                    }
-                  </pre>
+                
+                {/* File Content */}
+                <div className="overflow-auto" style={{ backgroundColor: 'var(--gh-bg-primary)' }}>
+                  <SyntaxHighlighter
+                    language={getFileLanguage(selectedFile)}
+                    style={vscDarkPlus}
+                    customStyle={{
+                      margin: 0,
+                      padding: '1rem',
+                      fontSize: '14px',
+                      lineHeight: '1.5',
+                      backgroundColor: 'var(--gh-bg-primary)',
+                      maxHeight: '32rem',
+                      overflow: 'auto'
+                    }}
+                    showLineNumbers={true}
+                    lineNumberStyle={{
+                      color: 'var(--gh-text-tertiary)',
+                      paddingRight: '1rem',
+                      minWidth: '3rem'
+                    }}
+                    wrapLines={true}
+                    wrapLongLines={true}
+                  >
+                    {fileContent}
+                  </SyntaxHighlighter>
                 </div>
               </div>
             ) : (
-              <div className="text-center py-8 text-gray-500">
-                <FileText className="h-8 w-8 mx-auto mb-2" />
+              <div className="text-center py-12 text-gray-500 border-2 border-dashed border-gray-200 rounded-lg">
+                <FileText className="h-12 w-12 mx-auto mb-3 text-gray-300" />
+                <h3 className="text-sm font-medium text-gray-900 mb-1">No file selected</h3>
                 <p className="text-sm">Click on a file to preview its content</p>
               </div>
             )}
@@ -480,48 +641,100 @@ const RepositoryDetails = () => {
         </div>
       </div>
 
-      {/* Quick Actions */}
-      <div className="mt-8 bg-gray-50 rounded-lg p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">
-          Quick Actions
-        </h2>
-        <div className="grid md:grid-cols-3 gap-4">
-          <Link
-            to={`/generate?repo=${encodeURIComponent(repository.full_name)}&auth=true`}
-            className="flex items-center space-x-3 p-4 bg-white rounded-lg hover:shadow-md transition-shadow"
-          >
-            <TestTube className="h-8 w-8 text-green-600" />
-            <div>
-              <h3 className="font-medium text-gray-900">Generate Test Cases</h3>
-              <p className="text-sm text-gray-600">Create AI-powered test suggestions</p>
-            </div>
-          </Link>
-
-          <a
-            href={repository.html_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center space-x-3 p-4 bg-white rounded-lg hover:shadow-md transition-shadow"
-          >
-            <Github className="h-8 w-8 text-gray-600" />
-            <div>
-              <h3 className="font-medium text-gray-900">View on GitHub</h3>
-              <p className="text-sm text-gray-600">Open repository in GitHub</p>
-            </div>
-          </a>
-
+      {/* Test Generation Section */}
+      <div className="mt-8 card">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold" style={{ color: 'var(--gh-text-primary)' }}>
+            Test Case Generation
+          </h2>
           <button
-            onClick={() => navigate('/dashboard')}
-            className="flex items-center space-x-3 p-4 bg-white rounded-lg hover:shadow-md transition-shadow"
+            onClick={() => setShowTestSelection(!showTestSelection)}
+            className={`btn-secondary text-sm ${showTestSelection ? '' : ''}`}
+            style={showTestSelection ? { 
+              backgroundColor: 'rgba(47, 129, 247, 0.15)', 
+              color: 'var(--gh-accent-secondary)', 
+              borderColor: 'var(--gh-accent-secondary)' 
+            } : {}}
           >
-            <ArrowLeft className="h-8 w-8 text-blue-600" />
-            <div>
-              <h3 className="font-medium text-gray-900">Back to Dashboard</h3>
-              <p className="text-sm text-gray-600">Return to repository list</p>
-            </div>
+            {showTestSelection ? 'Hide Selection' : 'Select Files for Testing'}
           </button>
         </div>
+
+        {showTestSelection && (
+          <div className="space-y-4">
+            <div className="rounded-lg p-4" style={{ 
+              backgroundColor: 'rgba(47, 129, 247, 0.1)', 
+              borderColor: 'var(--gh-accent-secondary)',
+              border: '1px solid'
+            }}>
+              <div className="flex items-center space-x-2 mb-2">
+                <Settings className="h-5 w-5" style={{ color: 'var(--gh-accent-secondary)' }} />
+                <h3 className="font-medium" style={{ color: 'var(--gh-text-primary)' }}>Select Code Files for Test Generation</h3>
+              </div>
+              <p className="text-sm" style={{ color: 'var(--gh-text-secondary)' }}>
+                Choose the code files you want to generate test cases for. Only code files (.py, .js, .jsx, .ts, .tsx, .java, etc.) can be selected.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between p-3 rounded-lg" style={{ backgroundColor: 'var(--gh-bg-tertiary)' }}>
+              <div className="flex items-center space-x-2">
+                <span className="text-sm font-medium" style={{ color: 'var(--gh-text-primary)' }}>
+                  Selected Files: {selectedFilesForTests.length}
+                </span>
+                {selectedFilesForTests.length > 0 && (
+                  <span className="text-xs" style={{ color: 'var(--gh-text-tertiary)' }}>
+                    ({selectedFilesForTests.map(f => f.split('/').pop()).join(', ')})
+                  </span>
+                )}
+              </div>
+              
+              <div className="flex items-center space-x-2">
+                {selectedFilesForTests.length > 0 && (
+                  <button
+                    onClick={() => setSelectedFilesForTests([])}
+                    className="text-xs px-2 py-1 rounded"
+                    style={{ 
+                      color: 'var(--gh-text-tertiary)',
+                      ':hover': { color: 'var(--gh-text-primary)', backgroundColor: 'var(--gh-bg-overlay)' }
+                    }}
+                  >
+                    Clear All
+                  </button>
+                )}
+                <button
+                  onClick={handleGenerateTests}
+                  disabled={selectedFilesForTests.length === 0}
+                  className="btn-primary text-sm flex items-center space-x-2"
+                >
+                  <Settings className="h-4 w-4" />
+                  <span>Generate Tests</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="text-xs" style={{ color: 'var(--gh-text-tertiary)' }}>
+              💡 <strong>Tip:</strong> Checkboxes appear next to code files in the file tree above. Click them to select files for test generation.
+            </div>
+          </div>
+        )}
+
+        {!showTestSelection && (
+          <div className="text-center py-8" style={{ color: 'var(--gh-text-tertiary)' }}>
+            <Settings className="h-8 w-8 mx-auto mb-3" style={{ color: 'var(--gh-text-tertiary)' }} />
+            <h3 className="text-sm font-medium mb-1" style={{ color: 'var(--gh-text-primary)' }}>Generate Test Cases</h3>
+            <p className="text-sm mb-4" style={{ color: 'var(--gh-text-secondary)' }}>
+              Select specific files from your repository to generate AI-powered test cases
+            </p>
+            <button
+              onClick={() => setShowTestSelection(true)}
+              className="btn-primary text-sm"
+            >
+              Start Selecting Files
+            </button>
+          </div>
+        )}
       </div>
+
     </div>
   )
 }

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * Simple script to validate that all imports in the project are resolvable
- * Run with: node validate-imports.js
+ * Import Validator
+ * Validates that all imports in the project are resolvable
  */
 
 import { readFileSync, readdirSync, statSync } from 'fs'
@@ -12,7 +12,7 @@ import { fileURLToPath } from 'url'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 
-const srcDir = join(__dirname, 'src')
+const srcDir = join(__dirname, '../src')
 
 // Get all JS/JSX files recursively
 function getAllFiles(dir, files = []) {
@@ -74,7 +74,8 @@ function checkImportPath(importPath, currentFile) {
 
 // Main validation
 function validateImports() {
-  console.log('🔍 Validating imports...\n')
+  console.log('🔍 Import Validator')
+  console.log('=' + '='.repeat(49))
   
   const files = getAllFiles(srcDir)
   let totalImports = 0
@@ -104,7 +105,8 @@ function validateImports() {
     console.log('✅ All imports are valid!')
     console.log(`📊 Checked ${totalImports} imports across ${files.length} files`)
   } else {
-    console.log('❌ Found invalid imports:\n')
+    console.log('❌ Found invalid imports:')
+    console.log()
     
     for (const issue of issues) {
       console.log(`📁 ${issue.file}`)

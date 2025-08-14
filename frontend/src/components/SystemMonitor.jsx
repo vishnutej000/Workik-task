@@ -2,9 +2,9 @@ import { useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { ENV } from '../config/env'
 import axios from 'axios'
-import { AlertCircle, CheckCircle, Loader2, Bug } from 'lucide-react'
+import { AlertCircle, CheckCircle, Loader2, Activity } from 'lucide-react'
 
-const ApiDebugger = () => {
+const SystemMonitor = () => {
   const { sessionToken, isAuthenticated } = useAuth()
   const [results, setResults] = useState({})
   const [testing, setTesting] = useState(false)
@@ -50,14 +50,14 @@ const ApiDebugger = () => {
     }
   }
 
-  const runAllTests = async () => {
+  const runSystemCheck = async () => {
     setTesting(true)
     setResults({})
     
     // Test basic endpoints
     await testEndpoint('Health Check', '/health')
     await testEndpoint('Frameworks', '/frameworks')
-    await testEndpoint('AI Test', '/debug/ai-test')
+    await testEndpoint('AI Status', '/admin/ai-status')
     
     if (isAuthenticated) {
       await testEndpoint('User Info', '/auth/user')
@@ -93,15 +93,15 @@ const ApiDebugger = () => {
     <div className="card">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center space-x-2">
-          <Bug className="h-5 w-5 text-gray-600" />
-          <h3 className="text-lg font-semibold text-gray-900">API Debugger</h3>
+          <Activity className="h-5 w-5 text-gray-600" />
+          <h3 className="text-lg font-semibold text-gray-900">System Monitor</h3>
         </div>
         <button
-          onClick={runAllTests}
+          onClick={runSystemCheck}
           disabled={testing}
           className="btn-secondary text-sm"
         >
-          {testing ? 'Testing...' : 'Run Tests'}
+          {testing ? 'Checking...' : 'Run System Check'}
         </button>
       </div>
 
@@ -119,7 +119,7 @@ const ApiDebugger = () => {
 
       {Object.keys(results).length > 0 && (
         <div className="space-y-2">
-          <h4 className="font-medium text-gray-900">Test Results:</h4>
+          <h4 className="font-medium text-gray-900">System Status:</h4>
           {Object.entries(results).map(([name, result]) => (
             <div key={name} className={`p-3 border rounded-lg ${getStatusColor(result)}`}>
               <div className="flex items-center justify-between">
@@ -149,4 +149,4 @@ const ApiDebugger = () => {
   )
 }
 
-export default ApiDebugger
+export default SystemMonitor

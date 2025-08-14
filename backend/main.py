@@ -38,7 +38,9 @@ app.add_middleware(
     allow_origins=[
         os.getenv("FRONTEND_URL", "http://localhost:5173"),
         "http://localhost:5173",
-        "http://127.0.0.1:5173"
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -57,6 +59,24 @@ serializer = URLSafeTimedSerializer(SECRET_KEY)
 
 # In-memory session storage (for MVP)
 sessions: Dict[str, Dict[str, Any]] = {}
+
+# Session cleanup - remove expired sessions
+def cleanup_sessions():
+    """Clean up expired or invalid sessions"""
+    import time
+    current_time = time.time()
+    expired_sessions = []
+    
+    for session_token, session_data in sessions.items():
+        # Remove sessions older than 24 hours
+        if current_time - session_data.get("created_at", 0) > 86400:
+            expired_sessions.append(session_token)
+    
+    for session_token in expired_sessions:
+        del sessions[session_token]
+        print(f"🧹 Cleaned up expired session: {session_token[:10]}...")
+    
+    return len(expired_sessions)
 
 # Pydantic models
 class Repository(BaseModel):
@@ -128,9 +148,49 @@ async def root():
 async def health_check():
     return {"status": "healthy"}
 
-@app.get("/debug/ai-test")
-async def debug_ai_test():
-    """Debug endpoint to test AI generation"""
+@app.post("/repo/generate-suggestions-debug")
+async def generate_suggestions_debug(request_data: DirectTestRequest):
+    """Debug endpoint that always returns test suggestions"""
+    print(f"🐛 Debug endpoint called with: {request_data}")
+    
+    # Always return fallback suggestions for debugging
+    first_file = request_data.files[0] if request_data.files else "code"
+    framework = request_data.framework or "pytest"
+    
+    suggestions = [
+        {
+            "id": 1,
+            "summary": f"Test basic functionality and return values in {first_file}",
+            "framework": framework
+        },
+        {
+            "id": 2,
+            "summary": f"Test error handling and exception scenarios in {first_file}",
+            "framework": framework
+        },
+        {
+            "id": 3,
+            "summary": f"Test input validation and edge cases in {first_file}",
+            "framework": framework
+        },
+        {
+            "id": 4,
+            "summary": f"Test integration points and dependencies in {first_file}",
+            "framework": framework
+        }
+    ]
+    
+    return {
+        "repository": "debug/test",
+        "framework": framework,
+        "suggestions": suggestions,
+        "files_analyzed": request_data.files,
+        "debug": True
+    }
+
+@app.get("/admin/ai-status")
+async def get_ai_status():
+    """Get AI service status and test generation"""
     try:
         messages = [
             {"role": "system", "content": "You are a test engineer. Generate exactly 3 test case suggestions."},
@@ -151,6 +211,22 @@ async def debug_ai_test():
             "error": str(e),
             "openrouter_key_set": bool(OPENROUTER_API_KEY)
         }
+
+@app.get("/admin/sessions")
+async def get_session_status():
+    """Get current session status and statistics"""
+    return {
+        "total_sessions": len(sessions),
+        "session_tokens": [token[:10] + "..." for token in sessions.keys()],
+        "sessions_detail": {
+            token[:10] + "...": {
+                "user": session_data["user"]["login"],
+                "created_at": session_data.get("created_at", "unknown"),
+                "last_accessed": session_data.get("last_accessed", "unknown")
+            }
+            for token, session_data in sessions.items()
+        }
+    }
 
 # Helper functions
 def get_session_token(request: Request) -> Optional[str]:
@@ -248,11 +324,20 @@ async def github_callback(request_data: AuthCallbackRequest):
         print(f"✅ User authenticated: {user_info.get('login')}")
         
         # Create session
+        import time
         session_token = secrets.token_urlsafe(32)
         sessions[session_token] = {
             "github_token": github_token,
-            "user": user_info
+            "user": user_info,
+            "created_at": time.time(),
+            "last_accessed": time.time()
         }
+        
+        print(f"✅ Created new session for user: {user_info['login']}")
+        print(f"📊 Total active sessions: {len(sessions)}")
+        
+        # Cleanup old sessions
+        cleanup_sessions()
         
         return {
             "session_token": session_token,
@@ -273,10 +358,18 @@ async def github_callback(request_data: AuthCallbackRequest):
 async def get_current_user(request: Request):
     """Get current authenticated user"""
     session_token = get_session_token(request)
-    if not session_token or session_token not in sessions:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    if not session_token:
+        raise HTTPException(status_code=401, detail="No session token provided")
+    
+    if session_token not in sessions:
+        print(f"❌ Session token not found in sessions: {session_token[:10]}...")
+        print(f"📊 Current sessions count: {len(sessions)}")
+        raise HTTPException(status_code=401, detail="Session expired or invalid")
     
     user_info = sessions[session_token]["user"]
+    print(f"✅ Session validated for user: {user_info['login']}")
+    
     return {
         "login": user_info["login"],
         "name": user_info.get("name"),
@@ -288,7 +381,10 @@ async def logout(request: Request):
     """Logout user"""
     session_token = get_session_token(request)
     if session_token and session_token in sessions:
+        user_login = sessions[session_token]["user"]["login"]
         del sessions[session_token]
+        print(f"🚪 User logged out: {user_login}")
+        print(f"📊 Remaining sessions: {len(sessions)}")
     return {"message": "Logged out successfully"}
 
 # Repository endpoints
@@ -425,6 +521,9 @@ async def analyze_repository_direct(request_data: DirectRepoRequest):
 @app.post("/repo/generate-suggestions")
 async def generate_suggestions_direct(request_data: DirectTestRequest):
     """Generate test suggestions directly from repo URL"""
+    print(f"🚀 Starting test suggestion generation...")
+    print(f"📝 Request data: repo_url={request_data.repo_url}, files={request_data.files}, framework={request_data.framework}")
+    
     try:
         owner, repo = parse_github_url(request_data.repo_url)
         token = get_github_token()
@@ -545,21 +644,77 @@ Generate 3-5 meaningful test case suggestions focusing on:
         
         for line in lines:
             line = line.strip()
-            if line and (line[0].isdigit() or line.startswith('-')):
+            # Only capture main numbered test case summaries, not sub-items like "Input:" or "Expected result:"
+            if line and line[0].isdigit() and '. ' in line:
+                # Skip lines that are clearly sub-items (Input, Expected, etc.)
+                if any(keyword in line.lower() for keyword in ['input:', 'expected result:', 'expected output:', '- input', '- expected']):
+                    continue
+                    
                 # Remove numbering and clean up
-                clean_line = line
-                if line[0].isdigit():
-                    clean_line = '. '.join(line.split('. ')[1:]) if '. ' in line else line[2:].strip()
-                elif line.startswith('-'):
-                    clean_line = line[1:].strip()
+                clean_line = '. '.join(line.split('. ')[1:]) if '. ' in line else line[2:].strip()
                 
-                if clean_line:
+                # Remove "Test case summary:" prefix if present
+                if 'test case summary:' in clean_line.lower():
+                    clean_line = clean_line.split('Test case summary: ')[1] if 'Test case summary: ' in clean_line else clean_line.split('test case summary: ')[1]
+                
+                if clean_line and len(clean_line) > 10:  # Ensure it's a meaningful summary
                     suggestions.append({
                         "id": suggestion_id,
-                        "summary": clean_line,
+                        "summary": clean_line.strip(),
                         "framework": framework
                     })
                     suggestion_id += 1
+        
+        # Enhanced Fallback: Always generate suggestions if AI parsing failed
+        if len(suggestions) == 0:
+            print("🔄 No suggestions parsed, generating enhanced fallback suggestions...")
+            
+            # Get file extension for better suggestions
+            first_file = request_data.files[0] if request_data.files else "code"
+            file_ext = first_file.split('.')[-1].lower() if '.' in first_file else 'code'
+            
+            # Framework-specific fallback suggestions
+            if framework == 'pytest':
+                fallback_suggestions = [
+                    f"Test function return values and data types in {first_file}",
+                    f"Test exception handling and error cases in {first_file}",
+                    f"Test input validation and boundary conditions in {first_file}",
+                    f"Test function behavior with edge cases and null values in {first_file}",
+                    f"Test integration with external dependencies in {first_file}"
+                ]
+            elif framework == 'jest':
+                fallback_suggestions = [
+                    f"Test component rendering and props in {first_file}",
+                    f"Test user interactions and event handlers in {first_file}",
+                    f"Test state management and updates in {first_file}",
+                    f"Test API calls and async operations in {first_file}",
+                    f"Test error boundaries and error handling in {first_file}"
+                ]
+            elif framework == 'junit':
+                fallback_suggestions = [
+                    f"Test method functionality and return values in {first_file}",
+                    f"Test exception handling and error scenarios in {first_file}",
+                    f"Test input validation and parameter checking in {first_file}",
+                    f"Test class initialization and object state in {first_file}",
+                    f"Test integration with external services in {first_file}"
+                ]
+            else:
+                fallback_suggestions = [
+                    f"Test core functionality and expected behavior in {first_file}",
+                    f"Test error handling and exception scenarios in {first_file}",
+                    f"Test input validation and data processing in {first_file}",
+                    f"Test edge cases and boundary conditions in {first_file}",
+                    f"Test performance and resource usage in {first_file}"
+                ]
+            
+            for i, summary in enumerate(fallback_suggestions, 1):
+                suggestions.append({
+                    "id": i,
+                    "summary": summary,
+                    "framework": framework
+                })
+            
+            print(f"✅ Generated {len(suggestions)} enhanced fallback suggestions")
         
         return {
             "repository": f"{owner}/{repo}",
@@ -901,51 +1056,83 @@ Generate 3-5 meaningful test case suggestions focusing on:
         original_line = line
         line = line.strip()
         
+        # Skip lines that are clearly sub-items (Input, Expected, etc.)
+        if any(keyword in line.lower() for keyword in ['input:', 'expected result:', 'expected output:', '- input', '- expected']):
+            print(f"❌ Skipped sub-item: {original_line[:50]}...")
+            continue
+        
         # More flexible parsing - look for various patterns
         if line and len(line) > 10:  # Minimum length for a meaningful suggestion
             clean_line = None
             
-            # Pattern 1: "1. Test case description"
+            # Pattern 1: "1. Test case description" (main pattern)
             if line[0].isdigit() and '. ' in line:
                 clean_line = '. '.join(line.split('. ')[1:])
+                # Remove "Test case summary:" prefix if present
+                if 'test case summary:' in clean_line.lower():
+                    clean_line = clean_line.split('Test case summary: ')[1] if 'Test case summary: ' in clean_line else clean_line.split('test case summary: ')[1]
             # Pattern 2: "1) Test case description"  
             elif line[0].isdigit() and ') ' in line:
                 clean_line = ') '.join(line.split(') ')[1:])
-            # Pattern 3: "- Test case description"
-            elif line.startswith('-'):
-                clean_line = line[1:].strip()
-            # Pattern 4: "* Test case description"
-            elif line.startswith('*'):
-                clean_line = line[1:].strip()
-            # Pattern 5: Just numbered at start "1 Test case description"
+            # Pattern 3: Just numbered at start "1 Test case description"
             elif line[0].isdigit() and line[1] == ' ':
                 clean_line = line[2:].strip()
-            # Pattern 6: Any line that looks like a test description (contains "test" or "verify")
-            elif any(keyword in line.lower() for keyword in ['test', 'verify', 'check', 'validate', 'ensure']):
-                clean_line = line
+            # Skip dash patterns for now as they often capture sub-items
             
-            if clean_line and len(clean_line) > 10:
+            if clean_line and len(clean_line) > 15:  # Ensure it's a meaningful summary
                 suggestions.append(TestSuggestion(
                     id=suggestion_id,
-                    summary=clean_line,
+                    summary=clean_line.strip(),
                     framework=framework
                 ))
                 suggestion_id += 1
                 print(f"✅ Parsed suggestion {suggestion_id-1}: {clean_line[:50]}...")
             else:
-                print(f"❌ Skipped line: {original_line[:50]}...")
+                print(f"❌ Skipped line (too short or empty): {original_line[:50]}...")
     
     print(f"🎯 Total suggestions parsed: {len(suggestions)}")
     
-    # Fallback: Generate basic suggestions if AI parsing failed
+    # Enhanced Fallback: Always generate suggestions if AI parsing failed
     if len(suggestions) == 0:
-        print("🔄 No suggestions parsed, generating fallback suggestions...")
-        fallback_suggestions = [
-            f"Test basic functionality of {request_data.files[0]} with valid inputs",
-            f"Test error handling in {request_data.files[0]} with invalid inputs", 
-            f"Test edge cases and boundary conditions for {request_data.files[0]}",
-            f"Test integration points and dependencies in {request_data.files[0]}"
-        ]
+        print("🔄 No suggestions parsed, generating enhanced fallback suggestions...")
+        
+        # Get file extension for better suggestions
+        first_file = request_data.files[0] if request_data.files else "code"
+        file_ext = first_file.split('.')[-1].lower() if '.' in first_file else 'code'
+        
+        # Framework-specific fallback suggestions
+        if framework == 'pytest':
+            fallback_suggestions = [
+                f"Test function return values and data types in {first_file}",
+                f"Test exception handling and error cases in {first_file}",
+                f"Test input validation and boundary conditions in {first_file}",
+                f"Test function behavior with edge cases and null values in {first_file}",
+                f"Test integration with external dependencies in {first_file}"
+            ]
+        elif framework == 'jest':
+            fallback_suggestions = [
+                f"Test component rendering and props in {first_file}",
+                f"Test user interactions and event handlers in {first_file}",
+                f"Test state management and updates in {first_file}",
+                f"Test API calls and async operations in {first_file}",
+                f"Test error boundaries and error handling in {first_file}"
+            ]
+        elif framework == 'junit':
+            fallback_suggestions = [
+                f"Test method functionality and return values in {first_file}",
+                f"Test exception handling and error scenarios in {first_file}",
+                f"Test input validation and parameter checking in {first_file}",
+                f"Test class initialization and object state in {first_file}",
+                f"Test integration with external services in {first_file}"
+            ]
+        else:
+            fallback_suggestions = [
+                f"Test core functionality and expected behavior in {first_file}",
+                f"Test error handling and exception scenarios in {first_file}",
+                f"Test input validation and data processing in {first_file}",
+                f"Test edge cases and boundary conditions in {first_file}",
+                f"Test performance and resource usage in {first_file}"
+            ]
         
         for i, summary in enumerate(fallback_suggestions, 1):
             suggestions.append(TestSuggestion(
@@ -954,7 +1141,7 @@ Generate 3-5 meaningful test case suggestions focusing on:
                 framework=framework
             ))
         
-        print(f"✅ Generated {len(suggestions)} fallback suggestions")
+        print(f"✅ Generated {len(suggestions)} enhanced fallback suggestions")
     
     # Store suggestions in session for later use
     if session_token in sessions:

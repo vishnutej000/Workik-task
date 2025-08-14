@@ -4,7 +4,7 @@ export const ENV = {
   API_BASE_URL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000',
   
   // App Configuration
-  APP_NAME: import.meta.env.VITE_APP_NAME || 'TestGen AI',
+  APP_NAME: import.meta.env.VITE_APP_NAME || 'GitHub Test Case Generator',
   
   // Feature Flags
   GITHUB_OAUTH_ENABLED: import.meta.env.VITE_GITHUB_OAUTH_ENABLED === 'true',
@@ -30,7 +30,10 @@ export const ENV = {
     CREATE_PR: '/create-pull-request',
     FRAMEWORKS: '/frameworks',
     HEALTH: '/health',
-    DEBUG_AI: '/debug/ai-test'
+    ADMIN: {
+      AI_STATUS: '/admin/ai-status',
+      SESSIONS: '/admin/sessions'
+    }
   },
   
   // UI Configuration

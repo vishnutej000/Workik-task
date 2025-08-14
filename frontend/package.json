@@ -12,8 +12,8 @@
     "start": "vite",
     "clean": "rm -rf dist node_modules/.vite",
     "type-check": "tsc --noEmit",
-    "validate": "node validate-imports.js",
-    "test-build": "node test-build.js"
+    "validate-imports": "node tools/import_validator.js",
+    "validate-build": "node tools/build_validator.js"
   },
   "dependencies": {
     "axios": "^1.11.0",
