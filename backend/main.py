@@ -5,6 +5,7 @@ import os
 from dotenv import load_dotenv
 import httpx
 import json
+import time
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 import secrets
@@ -279,6 +280,44 @@ async def get_session_status():
             for token, session_data in sessions.items()
         }
     }
+
+@app.get("/admin/test-pr-permissions")
+async def test_pr_permissions(request: Request):
+    """Test if the current user can create PRs"""
+    session_token = get_session_token(request)
+    if not session_token:
+        return {"error": "Not authenticated"}
+    
+    github_token = get_github_token_from_session(session_token)
+    if not github_token:
+        return {"error": "No GitHub token"}
+    
+    try:
+        # Get user info
+        user_info = await github_api_request("/user", github_token)
+        
+        # Get user's repositories with push access
+        repos_data = await github_api_request("/user/repos?affiliation=owner,collaborator&sort=updated&per_page=5", github_token)
+        
+        writable_repos = []
+        for repo in repos_data:
+            if repo.get("permissions", {}).get("push", False):
+                writable_repos.append({
+                    "name": repo["full_name"],
+                    "private": repo["private"],
+                    "permissions": repo.get("permissions", {})
+                })
+        
+        return {
+            "user": user_info["login"],
+            "total_repos": len(repos_data),
+            "writable_repos": len(writable_repos),
+            "sample_writable_repos": writable_repos[:3],
+            "github_scopes": github_token[:10] + "..." if github_token else None
+        }
+        
+    except Exception as e:
+        return {"error": str(e)}
 
 # Helper functions
 def get_session_token(request: Request) -> Optional[str]:
@@ -1438,11 +1477,21 @@ async def create_pull_request(request_data: CreatePRRequest, request: Request):
         raise HTTPException(status_code=400, detail="Invalid repository format. Expected 'owner/repo'")
     
     try:
-        # 1. Get the default branch
+        # 1. Get the default branch and verify repository access
         print("📡 Step 1: Getting repository info...")
         repo_info = await github_api_request(f"/repos/{owner}/{repo}", github_token)
         default_branch = repo_info["default_branch"]
+        
+        # Check if user has push access
+        if not repo_info.get("permissions", {}).get("push", False):
+            print("❌ User does not have push permissions")
+            raise HTTPException(
+                status_code=403, 
+                detail="You don't have write access to this repository. You need push permissions to create pull requests."
+            )
+        
         print(f"✅ Default branch: {default_branch}")
+        print(f"✅ Repository permissions verified")
         
         # 2. Get the latest commit SHA of the default branch
         print("📡 Step 2: Getting latest commit SHA...")
@@ -1450,21 +1499,46 @@ async def create_pull_request(request_data: CreatePRRequest, request: Request):
         base_sha = branch_info["object"]["sha"]
         print(f"✅ Base SHA: {base_sha[:8]}...")
         
-        # 3. Create a new branch
-        print(f"📡 Step 3: Creating branch {request_data.branch_name}...")
+        # 3. Create a new branch with unique name to avoid conflicts
+        unique_branch_name = f"{request_data.branch_name}-{int(time.time())}"
+        print(f"📡 Step 3: Creating branch {unique_branch_name}...")
         branch_data = {
-            "ref": f"refs/heads/{request_data.branch_name}",
+            "ref": f"refs/heads/{unique_branch_name}",
             "sha": base_sha
         }
         try:
             await github_api_request(f"/repos/{owner}/{repo}/git/refs", github_token, "POST", branch_data)
-            print(f"✅ Branch created: {request_data.branch_name}")
+            print(f"✅ Branch created: {unique_branch_name}")
         except Exception as branch_error:
-            print(f"⚠️ Branch creation failed (might already exist): {str(branch_error)}")
-            # Continue anyway - branch might already exist
+            print(f"❌ Branch creation failed: {str(branch_error)}")
+            # Try with a different name
+            unique_branch_name = f"{request_data.branch_name}-{int(time.time())}-{secrets.token_hex(4)}"
+            branch_data["ref"] = f"refs/heads/{unique_branch_name}"
+            try:
+                await github_api_request(f"/repos/{owner}/{repo}/git/refs", github_token, "POST", branch_data)
+                print(f"✅ Branch created with fallback name: {unique_branch_name}")
+            except Exception as fallback_error:
+                print(f"❌ Fallback branch creation also failed: {str(fallback_error)}")
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"Failed to create branch. This might be due to naming conflicts or permissions: {str(fallback_error)}"
+                )
         
-        # 4. Create a blob with the test file content
-        print("📡 Step 4: Creating blob for test file...")
+        # 4. Validate test file name and content
+        print("📡 Step 4: Validating test file...")
+        if not request_data.test_file_name or not request_data.test_file_name.strip():
+            raise HTTPException(status_code=400, detail="Test file name is required")
+        
+        if not request_data.test_code or not request_data.test_code.strip():
+            raise HTTPException(status_code=400, detail="Test code content is required")
+        
+        # Sanitize file name to prevent path traversal
+        safe_filename = request_data.test_file_name.replace('..', '').replace('/', '_').replace('\\', '_')
+        if safe_filename != request_data.test_file_name:
+            print(f"⚠️ Sanitized filename: {request_data.test_file_name} -> {safe_filename}")
+        
+        # 5. Create a blob with the test file content
+        print("📡 Step 5: Creating blob for test file...")
         blob_data = {
             "content": request_data.test_code,
             "encoding": "utf-8"
@@ -1473,18 +1547,18 @@ async def create_pull_request(request_data: CreatePRRequest, request: Request):
         blob_sha = blob_response["sha"]
         print(f"✅ Blob created: {blob_sha[:8]}...")
         
-        # 5. Get the current tree
-        print("📡 Step 5: Getting current tree...")
+        # 6. Get the current tree
+        print("📡 Step 6: Getting current tree...")
         tree_response = await github_api_request(f"/repos/{owner}/{repo}/git/trees/{base_sha}", github_token)
         print(f"✅ Tree retrieved with {len(tree_response.get('tree', []))} items")
         
-        # 6. Create a new tree with the test file
-        print("📡 Step 6: Creating new tree with test file...")
+        # 7. Create a new tree with the test file
+        print("📡 Step 7: Creating new tree with test file...")
         tree_data = {
             "base_tree": base_sha,
             "tree": [
                 {
-                    "path": request_data.test_file_name,
+                    "path": safe_filename,
                     "mode": "100644",
                     "type": "blob",
                     "sha": blob_sha
@@ -1495,8 +1569,8 @@ async def create_pull_request(request_data: CreatePRRequest, request: Request):
         new_tree_sha = new_tree_response["sha"]
         print(f"✅ New tree created: {new_tree_sha[:8]}...")
         
-        # 7. Create a commit
-        print("📡 Step 7: Creating commit...")
+        # 8. Create a commit
+        print("📡 Step 8: Creating commit...")
         commit_data = {
             "message": request_data.commit_message,
             "tree": new_tree_sha,
@@ -1506,21 +1580,21 @@ async def create_pull_request(request_data: CreatePRRequest, request: Request):
         commit_sha = commit_response["sha"]
         print(f"✅ Commit created: {commit_sha[:8]}...")
         
-        # 8. Update the branch reference
-        print(f"📡 Step 8: Updating branch reference...")
+        # 9. Update the branch reference
+        print(f"📡 Step 9: Updating branch reference...")
         update_ref_data = {
             "sha": commit_sha
         }
-        await github_api_request(f"/repos/{owner}/{repo}/git/refs/heads/{request_data.branch_name}", github_token, "PATCH", update_ref_data)
+        await github_api_request(f"/repos/{owner}/{repo}/git/refs/heads/{unique_branch_name}", github_token, "PATCH", update_ref_data)
         print(f"✅ Branch updated with new commit")
         
-        # 9. Create the pull request
-        print("📡 Step 9: Creating pull request...")
+        # 10. Create the pull request
+        print("📡 Step 10: Creating pull request...")
         pr_data = {
-            "title": f"Add test file: {request_data.test_file_name}",
-            "head": request_data.branch_name,
+            "title": f"Add test file: {safe_filename}",
+            "head": unique_branch_name,
             "base": default_branch,
-            "body": f"This PR adds automated test cases generated by Test Case Generator.\n\n**Test file:** `{request_data.test_file_name}`\n\n**Commit:** {request_data.commit_message}\n\n---\n*Generated by GitHub Test Case Generator*"
+            "body": f"This PR adds automated test cases generated by Test Case Generator.\n\n**Test file:** `{safe_filename}`\n\n**Commit:** {request_data.commit_message}\n\n**Branch:** `{unique_branch_name}`\n\n---\n*Generated by GitHub Test Case Generator*"
         }
         pr_response = await github_api_request(f"/repos/{owner}/{repo}/pulls", github_token, "POST", pr_data)
         
@@ -1530,7 +1604,9 @@ async def create_pull_request(request_data: CreatePRRequest, request: Request):
             "success": True,
             "pr_url": pr_response["html_url"],
             "pr_number": pr_response["number"],
-            "branch_name": request_data.branch_name
+            "branch_name": unique_branch_name,
+            "commit_sha": commit_sha,
+            "test_file_name": safe_filename
         }
         
     except Exception as e:

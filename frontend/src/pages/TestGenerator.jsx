@@ -467,14 +467,24 @@ const TestGenerator = () => {
     setError('')
 
     try {
-      const branchName = `testgen/${generatedCode.suggested_filename.replace(/\./g, '-')}-${Date.now()}`
-      const commitMessage = `Add ${generatedCode.suggested_filename}\n\nGenerated test for: ${selectedSuggestion?.summary || 'test case'}`
+      // Validate required data
+      if (!generatedCode.test_code || !generatedCode.suggested_filename) {
+        throw new Error('Generated code is incomplete. Please regenerate the test code.')
+      }
+
+      const branchName = `testgen/${generatedCode.suggested_filename.replace(/\./g, '-')}`
+      const commitMessage = `Add ${generatedCode.suggested_filename}\n\nGenerated test for: ${selectedSuggestion?.summary || 'test case'}\nFramework: ${generatedCode.framework || 'N/A'}`
 
       console.log('📝 PR Details:')
       console.log('  Repository:', repoData.repository.full_name)
       console.log('  Branch:', branchName)
       console.log('  File:', generatedCode.suggested_filename)
+      console.log('  Framework:', generatedCode.framework)
       console.log('  Commit message:', commitMessage)
+      console.log('  Code length:', generatedCode.test_code.length)
+
+      // Show progress message
+      setSuccess('Creating pull request... This may take a few moments.')
 
       const prData = await createPullRequest(
         repoData.repository.full_name,
@@ -487,17 +497,26 @@ const TestGenerator = () => {
       console.log('✅ PR created successfully:', prData)
 
       setSuccess(
-        <div>
-          Pull request created successfully! 
-          <a 
-            href={prData.pr_url} 
-            target="_blank" 
-            rel="noopener noreferrer"
-            className="ml-1 underline"
-            style={{ color: 'var(--gh-accent-secondary)' }}
-          >
-            View PR #{prData.pr_number} <ExternalLink className="h-3 w-3 inline ml-1" />
-          </a>
+        <div className="space-y-2">
+          <div className="font-medium text-green-800">
+            🎉 Pull request created successfully!
+          </div>
+          <div className="text-sm text-green-700">
+            <div>Branch: <code className="bg-green-100 px-1 rounded">{prData.branch_name}</code></div>
+            <div>File: <code className="bg-green-100 px-1 rounded">{prData.test_file_name || generatedCode.suggested_filename}</code></div>
+          </div>
+          <div>
+            <a 
+              href={prData.pr_url} 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="inline-flex items-center space-x-1 underline font-medium"
+              style={{ color: 'var(--gh-accent-secondary)' }}
+            >
+              <span>View PR #{prData.pr_number}</span>
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          </div>
         </div>
       )
     } catch (err) {
