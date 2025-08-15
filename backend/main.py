@@ -24,7 +24,7 @@ from utils import (
 from github_direct import (
     parse_github_url, fetch_github_repo_info, fetch_github_repo_files, 
     fetch_file_content, detect_language_from_extension, 
-    detect_framework_from_language, get_github_token
+    detect_framework_from_language, detect_framework_from_project_structure, get_github_token
 )
 
 # Load environment variables
@@ -150,42 +150,94 @@ async def health_check():
 
 @app.post("/repo/generate-suggestions-debug")
 async def generate_suggestions_debug(request_data: DirectTestRequest):
-    """Debug endpoint that always returns test suggestions"""
-    print(f"🐛 Debug endpoint called with: {request_data}")
+    """Debug endpoint that ALWAYS returns test suggestions - GUARANTEED"""
+    print(f"🐛 DEBUG ENDPOINT: Always returns suggestions")
+    print(f"📝 Request: repo={request_data.repo_url}, files={request_data.files}, framework={request_data.framework}")
     
-    # Always return fallback suggestions for debugging
-    first_file = request_data.files[0] if request_data.files else "code"
+    # ALWAYS return suggestions - this endpoint CANNOT fail
+    first_file = request_data.files[0] if request_data.files else "test_file.py"
+    file_name = first_file.split('/')[-1] if '/' in first_file else first_file
     framework = request_data.framework or "pytest"
     
+    # Generate guaranteed suggestions
     suggestions = [
         {
             "id": 1,
-            "summary": f"Test basic functionality and return values in {first_file}",
+            "summary": f"Verify core functionality and return values in {file_name}",
             "framework": framework
         },
         {
             "id": 2,
-            "summary": f"Test error handling and exception scenarios in {first_file}",
+            "summary": f"Test error handling and exception scenarios in {file_name}",
             "framework": framework
         },
         {
             "id": 3,
-            "summary": f"Test input validation and edge cases in {first_file}",
+            "summary": f"Validate input parameters and edge cases in {file_name}",
             "framework": framework
         },
         {
             "id": 4,
-            "summary": f"Test integration points and dependencies in {first_file}",
+            "summary": f"Test integration points and external dependencies in {file_name}",
+            "framework": framework
+        },
+        {
+            "id": 5,
+            "summary": f"Verify performance and resource usage in {file_name}",
             "framework": framework
         }
     ]
     
+    print(f"✅ DEBUG: Returning {len(suggestions)} guaranteed suggestions")
+    
     return {
-        "repository": "debug/test",
+        "repository": "debug/guaranteed-test",
         "framework": framework,
         "suggestions": suggestions,
         "files_analyzed": request_data.files,
-        "debug": True
+        "debug": True,
+        "guaranteed": True
+    }
+
+@app.post("/repo/force-suggestions")
+async def force_suggestions(request_data: DirectTestRequest):
+    """FORCE endpoint - bypasses all AI and returns immediate suggestions"""
+    print(f"🚀 FORCE ENDPOINT: Immediate suggestions without AI")
+    
+    first_file = request_data.files[0] if request_data.files else "code.py"
+    file_name = first_file.split('/')[-1] if '/' in first_file else first_file
+    framework = request_data.framework or "pytest"
+    
+    # Immediate suggestions - no AI, no parsing, no failures
+    suggestions = [
+        {"id": 1, "summary": f"Test happy path scenarios in {file_name}", "framework": framework},
+        {"id": 2, "summary": f"Test error conditions and exceptions in {file_name}", "framework": framework},
+        {"id": 3, "summary": f"Test boundary values and edge cases in {file_name}", "framework": framework},
+        {"id": 4, "summary": f"Test null and empty input handling in {file_name}", "framework": framework},
+        {"id": 5, "summary": f"Test integration and dependency mocking in {file_name}", "framework": framework}
+    ]
+    
+    return {
+        "repository": f"force/{request_data.repo_url.split('/')[-1] if request_data.repo_url else 'test'}",
+        "framework": framework,
+        "suggestions": suggestions,
+        "files_analyzed": request_data.files,
+        "forced": True
+    }
+
+@app.get("/test/simple-suggestions")
+async def simple_test_suggestions():
+    """Simple test endpoint that always returns suggestions"""
+    return {
+        "repository": "test/simple",
+        "framework": "pytest",
+        "suggestions": [
+            {"id": 1, "summary": "Test basic functionality", "framework": "pytest"},
+            {"id": 2, "summary": "Test error handling", "framework": "pytest"},
+            {"id": 3, "summary": "Test edge cases", "framework": "pytest"}
+        ],
+        "files_analyzed": ["test.py"],
+        "test": True
     }
 
 @app.get("/admin/ai-status")
@@ -471,15 +523,29 @@ async def get_frameworks():
     }
 
 @app.get("/frameworks/{file_path:path}")
-async def get_frameworks_for_file(file_path: str):
-    """Get available frameworks for a specific file"""
+async def get_frameworks_for_file(file_path: str, repo_url: str = None):
+    """Get available frameworks for a specific file with enhanced detection"""
     available = get_available_frameworks(file_path)
     language_config = get_language_config(file_path)
+    
+    # Try enhanced detection if repo_url is provided
+    enhanced_framework = None
+    if repo_url:
+        try:
+            owner, repo = parse_github_url(repo_url)
+            token = get_github_token()
+            enhanced_framework = await detect_framework_from_project_structure(owner, repo, file_path, token)
+            print(f"🔧 Enhanced detection for {file_path}: {enhanced_framework}")
+        except Exception as e:
+            print(f"❌ Enhanced detection failed: {str(e)}")
+            enhanced_framework = language_config['framework']
     
     return {
         "file_path": file_path,
         "language": language_config['language'],
-        "default_framework": language_config['framework'],
+        "default_framework": enhanced_framework or language_config['framework'],
+        "simple_framework": language_config['framework'],
+        "enhanced_detection": enhanced_framework is not None,
         "available_frameworks": available,
         "framework_details": {
             framework: get_framework_config(framework) 
@@ -534,14 +600,13 @@ async def generate_suggestions_direct(request_data: DirectTestRequest):
             content = await fetch_file_content(owner, repo, file_path, token)
             file_contents.append(f"File: {file_path}\n```\n{content}\n```")
         
-        # Detect framework if not specified
+        # Detect framework if not specified using enhanced detection
         if request_data.framework:
             framework = request_data.framework
         else:
-            # Auto-detect from first file
-            first_file = request_data.files[0]
-            language = detect_language_from_extension(first_file)
-            framework = detect_framework_from_language(language, first_file)
+            # Use enhanced framework detection that analyzes project structure
+            framework = await detect_framework_from_project_structure(owner, repo, request_data.files[0], token)
+            print(f"🔧 Enhanced framework detection result: {framework}")
         
         # Get framework configuration
         framework_config = get_framework_config(framework)
@@ -665,48 +730,59 @@ Generate 3-5 meaningful test case suggestions focusing on:
                     })
                     suggestion_id += 1
         
-        # Enhanced Fallback: Always generate suggestions if AI parsing failed
+        # BULLETPROOF Fallback: ALWAYS generate suggestions - GUARANTEED!
         if len(suggestions) == 0:
-            print("🔄 No suggestions parsed, generating enhanced fallback suggestions...")
+            print("🔄 No suggestions parsed, generating GUARANTEED fallback suggestions...")
             
-            # Get file extension for better suggestions
-            first_file = request_data.files[0] if request_data.files else "code"
-            file_ext = first_file.split('.')[-1].lower() if '.' in first_file else 'code'
+            # Get file info for better suggestions
+            first_file = request_data.files[0] if request_data.files else "code_file"
+            file_name = first_file.split('/')[-1] if '/' in first_file else first_file
+            file_ext = file_name.split('.')[-1].lower() if '.' in file_name else 'code'
             
-            # Framework-specific fallback suggestions
-            if framework == 'pytest':
+            # GUARANTEED Framework-specific fallback suggestions
+            if framework == 'pytest' or file_ext == 'py':
                 fallback_suggestions = [
-                    f"Test function return values and data types in {first_file}",
-                    f"Test exception handling and error cases in {first_file}",
-                    f"Test input validation and boundary conditions in {first_file}",
-                    f"Test function behavior with edge cases and null values in {first_file}",
-                    f"Test integration with external dependencies in {first_file}"
+                    f"Verify that functions in {file_name} return correct data types and values",
+                    f"Test error handling and exception scenarios in {file_name}",
+                    f"Validate input parameters and boundary conditions in {file_name}",
+                    f"Test function behavior with None, empty, and invalid inputs in {file_name}",
+                    f"Verify integration points and external dependencies in {file_name}"
                 ]
-            elif framework == 'jest':
+            elif framework == 'jest' or file_ext in ['js', 'jsx', 'ts', 'tsx']:
                 fallback_suggestions = [
-                    f"Test component rendering and props in {first_file}",
-                    f"Test user interactions and event handlers in {first_file}",
-                    f"Test state management and updates in {first_file}",
-                    f"Test API calls and async operations in {first_file}",
-                    f"Test error boundaries and error handling in {first_file}"
+                    f"Test component rendering and prop validation in {file_name}",
+                    f"Verify user interactions and event handling in {file_name}",
+                    f"Test state management and component updates in {file_name}",
+                    f"Validate API calls and async operations in {file_name}",
+                    f"Test error boundaries and error handling in {file_name}"
                 ]
-            elif framework == 'junit':
+            elif framework == 'junit' or file_ext == 'java':
                 fallback_suggestions = [
-                    f"Test method functionality and return values in {first_file}",
-                    f"Test exception handling and error scenarios in {first_file}",
-                    f"Test input validation and parameter checking in {first_file}",
-                    f"Test class initialization and object state in {first_file}",
-                    f"Test integration with external services in {first_file}"
+                    f"Test method return values and object states in {file_name}",
+                    f"Verify exception handling and error scenarios in {file_name}",
+                    f"Test input validation and parameter checking in {file_name}",
+                    f"Validate class initialization and constructor behavior in {file_name}",
+                    f"Test integration with external services and dependencies in {file_name}"
+                ]
+            elif framework == 'selenium':
+                fallback_suggestions = [
+                    f"Test web element interactions and page navigation for {file_name}",
+                    f"Verify form submissions and input validations for {file_name}",
+                    f"Test dynamic content loading and AJAX operations for {file_name}",
+                    f"Validate cross-browser compatibility for {file_name}",
+                    f"Test responsive design and mobile compatibility for {file_name}"
                 ]
             else:
+                # Universal fallback that works for ANY file type
                 fallback_suggestions = [
-                    f"Test core functionality and expected behavior in {first_file}",
-                    f"Test error handling and exception scenarios in {first_file}",
-                    f"Test input validation and data processing in {first_file}",
-                    f"Test edge cases and boundary conditions in {first_file}",
-                    f"Test performance and resource usage in {first_file}"
+                    f"Test core functionality and expected behavior in {file_name}",
+                    f"Verify error handling and exception scenarios in {file_name}",
+                    f"Test input validation and data processing in {file_name}",
+                    f"Validate edge cases and boundary conditions in {file_name}",
+                    f"Test performance and resource usage in {file_name}"
                 ]
             
+            # FORCE creation of suggestions - this CANNOT fail
             for i, summary in enumerate(fallback_suggestions, 1):
                 suggestions.append({
                     "id": i,
@@ -714,7 +790,26 @@ Generate 3-5 meaningful test case suggestions focusing on:
                     "framework": framework
                 })
             
-            print(f"✅ Generated {len(suggestions)} enhanced fallback suggestions")
+            print(f"✅ GUARANTEED: Generated {len(suggestions)} fallback suggestions")
+        
+        # FINAL SAFETY CHECK - If somehow still empty, create basic suggestions
+        if len(suggestions) == 0:
+            print("🚨 EMERGENCY FALLBACK: Creating basic suggestions...")
+            emergency_suggestions = [
+                "Test basic functionality with valid inputs",
+                "Test error handling with invalid inputs",
+                "Test edge cases and boundary conditions",
+                "Test integration and dependencies"
+            ]
+            
+            for i, summary in enumerate(emergency_suggestions, 1):
+                suggestions.append({
+                    "id": i,
+                    "summary": summary,
+                    "framework": framework or "pytest"
+                })
+            
+            print(f"🚨 EMERGENCY: Generated {len(suggestions)} basic suggestions")
         
         return {
             "repository": f"{owner}/{repo}",
@@ -739,13 +834,12 @@ async def generate_code_direct(request_data: DirectCodeRequest):
             content = await fetch_file_content(owner, repo, file_path, token)
             file_contents.append(f"File: {file_path}\n```\n{content}\n```")
         
-        # Detect framework and language
+        # Detect framework and language using enhanced detection
         if request_data.framework:
             framework = request_data.framework
         else:
-            first_file = request_data.files[0]
-            language = detect_language_from_extension(first_file)
-            framework = detect_framework_from_language(language, first_file)
+            framework = await detect_framework_from_project_structure(owner, repo, request_data.files[0], token)
+            print(f"🔧 Enhanced framework detection for code generation: {framework}")
         
         # Detect primary language
         first_file = request_data.files[0]
@@ -886,7 +980,7 @@ async def call_openrouter_api(messages: List[dict], model: str = "mistralai/mist
         return result["choices"][0]["message"]["content"]
 
 @app.post("/generate-test-suggestions")
-async def generate_test_suggestions(request_data: GenerateTestRequest, request: Request) -> List[TestSuggestion]:
+async def generate_test_suggestions(request_data: GenerateTestRequest, request: Request):
     """Generate test case suggestions using AI"""
     session_token = get_session_token(request)
     if not session_token:
@@ -1092,48 +1186,59 @@ Generate 3-5 meaningful test case suggestions focusing on:
     
     print(f"🎯 Total suggestions parsed: {len(suggestions)}")
     
-    # Enhanced Fallback: Always generate suggestions if AI parsing failed
+    # BULLETPROOF Fallback: ALWAYS generate suggestions - GUARANTEED!
     if len(suggestions) == 0:
-        print("🔄 No suggestions parsed, generating enhanced fallback suggestions...")
+        print("🔄 No suggestions parsed, generating GUARANTEED fallback suggestions...")
         
-        # Get file extension for better suggestions
-        first_file = request_data.files[0] if request_data.files else "code"
-        file_ext = first_file.split('.')[-1].lower() if '.' in first_file else 'code'
+        # Get file info for better suggestions
+        first_file = request_data.files[0] if request_data.files else "code_file"
+        file_name = first_file.split('/')[-1] if '/' in first_file else first_file
+        file_ext = file_name.split('.')[-1].lower() if '.' in file_name else 'code'
         
-        # Framework-specific fallback suggestions
-        if framework == 'pytest':
+        # GUARANTEED Framework-specific fallback suggestions
+        if framework == 'pytest' or file_ext == 'py':
             fallback_suggestions = [
-                f"Test function return values and data types in {first_file}",
-                f"Test exception handling and error cases in {first_file}",
-                f"Test input validation and boundary conditions in {first_file}",
-                f"Test function behavior with edge cases and null values in {first_file}",
-                f"Test integration with external dependencies in {first_file}"
+                f"Verify that functions in {file_name} return correct data types and values",
+                f"Test error handling and exception scenarios in {file_name}",
+                f"Validate input parameters and boundary conditions in {file_name}",
+                f"Test function behavior with None, empty, and invalid inputs in {file_name}",
+                f"Verify integration points and external dependencies in {file_name}"
             ]
-        elif framework == 'jest':
+        elif framework == 'jest' or file_ext in ['js', 'jsx', 'ts', 'tsx']:
             fallback_suggestions = [
-                f"Test component rendering and props in {first_file}",
-                f"Test user interactions and event handlers in {first_file}",
-                f"Test state management and updates in {first_file}",
-                f"Test API calls and async operations in {first_file}",
-                f"Test error boundaries and error handling in {first_file}"
+                f"Test component rendering and prop validation in {file_name}",
+                f"Verify user interactions and event handling in {file_name}",
+                f"Test state management and component updates in {file_name}",
+                f"Validate API calls and async operations in {file_name}",
+                f"Test error boundaries and error handling in {file_name}"
             ]
-        elif framework == 'junit':
+        elif framework == 'junit' or file_ext == 'java':
             fallback_suggestions = [
-                f"Test method functionality and return values in {first_file}",
-                f"Test exception handling and error scenarios in {first_file}",
-                f"Test input validation and parameter checking in {first_file}",
-                f"Test class initialization and object state in {first_file}",
-                f"Test integration with external services in {first_file}"
+                f"Test method return values and object states in {file_name}",
+                f"Verify exception handling and error scenarios in {file_name}",
+                f"Test input validation and parameter checking in {file_name}",
+                f"Validate class initialization and constructor behavior in {file_name}",
+                f"Test integration with external services and dependencies in {file_name}"
+            ]
+        elif framework == 'selenium':
+            fallback_suggestions = [
+                f"Test web element interactions and page navigation for {file_name}",
+                f"Verify form submissions and input validations for {file_name}",
+                f"Test dynamic content loading and AJAX operations for {file_name}",
+                f"Validate cross-browser compatibility for {file_name}",
+                f"Test responsive design and mobile compatibility for {file_name}"
             ]
         else:
+            # Universal fallback that works for ANY file type
             fallback_suggestions = [
-                f"Test core functionality and expected behavior in {first_file}",
-                f"Test error handling and exception scenarios in {first_file}",
-                f"Test input validation and data processing in {first_file}",
-                f"Test edge cases and boundary conditions in {first_file}",
-                f"Test performance and resource usage in {first_file}"
+                f"Test core functionality and expected behavior in {file_name}",
+                f"Verify error handling and exception scenarios in {file_name}",
+                f"Test input validation and data processing in {file_name}",
+                f"Validate edge cases and boundary conditions in {file_name}",
+                f"Test performance and resource usage in {file_name}"
             ]
         
+        # FORCE creation of suggestions - this CANNOT fail
         for i, summary in enumerate(fallback_suggestions, 1):
             suggestions.append(TestSuggestion(
                 id=i,
@@ -1141,7 +1246,26 @@ Generate 3-5 meaningful test case suggestions focusing on:
                 framework=framework
             ))
         
-        print(f"✅ Generated {len(suggestions)} enhanced fallback suggestions")
+        print(f"✅ GUARANTEED: Generated {len(suggestions)} fallback suggestions")
+    
+    # FINAL SAFETY CHECK - If somehow still empty, create basic suggestions
+    if len(suggestions) == 0:
+        print("🚨 EMERGENCY FALLBACK: Creating basic suggestions...")
+        emergency_suggestions = [
+            "Test basic functionality with valid inputs",
+            "Test error handling with invalid inputs", 
+            "Test edge cases and boundary conditions",
+            "Test integration and dependencies"
+        ]
+        
+        for i, summary in enumerate(emergency_suggestions, 1):
+            suggestions.append(TestSuggestion(
+                id=i,
+                summary=summary,
+                framework=framework or "pytest"
+            ))
+        
+        print(f"🚨 EMERGENCY: Generated {len(suggestions)} basic suggestions")
     
     # Store suggestions in session for later use
     if session_token in sessions:
@@ -1149,7 +1273,22 @@ Generate 3-5 meaningful test case suggestions focusing on:
         sessions[session_token]["last_files"] = request_data.files
         sessions[session_token]["last_repo"] = request_data.repo_full_name
     
-    return suggestions
+    # Convert to the same format as direct endpoints
+    suggestions_dict = []
+    for suggestion in suggestions:
+        suggestions_dict.append({
+            "id": suggestion.id,
+            "summary": suggestion.summary,
+            "framework": suggestion.framework
+        })
+    
+    return {
+        "repository": request_data.repo_full_name,
+        "framework": framework,
+        "suggestions": suggestions_dict,
+        "files_analyzed": request_data.files,
+        "oauth": True
+    }
 
 @app.post("/generate-test-code")
 async def generate_test_code(request_data: GenerateCodeRequest, request: Request):
@@ -1277,44 +1416,70 @@ Generate a complete test file with:
 @app.post("/create-pull-request")
 async def create_pull_request(request_data: CreatePRRequest, request: Request):
     """Create a pull request with the generated test code"""
+    print(f"🚀 Starting PR creation for {request_data.repo_full_name}")
+    print(f"📝 File: {request_data.test_file_name}")
+    print(f"🌿 Branch: {request_data.branch_name}")
+    
     session_token = get_session_token(request)
     if not session_token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+        print("❌ No session token provided")
+        raise HTTPException(status_code=401, detail="Not authenticated - please login with GitHub")
     
     github_token = get_github_token_from_session(session_token)
     if not github_token:
-        raise HTTPException(status_code=401, detail="GitHub token not found")
+        print("❌ No GitHub token in session")
+        raise HTTPException(status_code=401, detail="GitHub token not found - please login again")
     
-    owner, repo = request_data.repo_full_name.split("/")
+    try:
+        owner, repo = request_data.repo_full_name.split("/")
+        print(f"📁 Repository: {owner}/{repo}")
+    except ValueError:
+        print(f"❌ Invalid repository format: {request_data.repo_full_name}")
+        raise HTTPException(status_code=400, detail="Invalid repository format. Expected 'owner/repo'")
     
     try:
         # 1. Get the default branch
+        print("📡 Step 1: Getting repository info...")
         repo_info = await github_api_request(f"/repos/{owner}/{repo}", github_token)
         default_branch = repo_info["default_branch"]
+        print(f"✅ Default branch: {default_branch}")
         
         # 2. Get the latest commit SHA of the default branch
+        print("📡 Step 2: Getting latest commit SHA...")
         branch_info = await github_api_request(f"/repos/{owner}/{repo}/git/refs/heads/{default_branch}", github_token)
         base_sha = branch_info["object"]["sha"]
+        print(f"✅ Base SHA: {base_sha[:8]}...")
         
         # 3. Create a new branch
+        print(f"📡 Step 3: Creating branch {request_data.branch_name}...")
         branch_data = {
             "ref": f"refs/heads/{request_data.branch_name}",
             "sha": base_sha
         }
-        await github_api_request(f"/repos/{owner}/{repo}/git/refs", github_token, "POST", branch_data)
+        try:
+            await github_api_request(f"/repos/{owner}/{repo}/git/refs", github_token, "POST", branch_data)
+            print(f"✅ Branch created: {request_data.branch_name}")
+        except Exception as branch_error:
+            print(f"⚠️ Branch creation failed (might already exist): {str(branch_error)}")
+            # Continue anyway - branch might already exist
         
         # 4. Create a blob with the test file content
+        print("📡 Step 4: Creating blob for test file...")
         blob_data = {
             "content": request_data.test_code,
             "encoding": "utf-8"
         }
         blob_response = await github_api_request(f"/repos/{owner}/{repo}/git/blobs", github_token, "POST", blob_data)
         blob_sha = blob_response["sha"]
+        print(f"✅ Blob created: {blob_sha[:8]}...")
         
         # 5. Get the current tree
+        print("📡 Step 5: Getting current tree...")
         tree_response = await github_api_request(f"/repos/{owner}/{repo}/git/trees/{base_sha}", github_token)
+        print(f"✅ Tree retrieved with {len(tree_response.get('tree', []))} items")
         
         # 6. Create a new tree with the test file
+        print("📡 Step 6: Creating new tree with test file...")
         tree_data = {
             "base_tree": base_sha,
             "tree": [
@@ -1328,8 +1493,10 @@ async def create_pull_request(request_data: CreatePRRequest, request: Request):
         }
         new_tree_response = await github_api_request(f"/repos/{owner}/{repo}/git/trees", github_token, "POST", tree_data)
         new_tree_sha = new_tree_response["sha"]
+        print(f"✅ New tree created: {new_tree_sha[:8]}...")
         
         # 7. Create a commit
+        print("📡 Step 7: Creating commit...")
         commit_data = {
             "message": request_data.commit_message,
             "tree": new_tree_sha,
@@ -1337,21 +1504,27 @@ async def create_pull_request(request_data: CreatePRRequest, request: Request):
         }
         commit_response = await github_api_request(f"/repos/{owner}/{repo}/git/commits", github_token, "POST", commit_data)
         commit_sha = commit_response["sha"]
+        print(f"✅ Commit created: {commit_sha[:8]}...")
         
         # 8. Update the branch reference
+        print(f"📡 Step 8: Updating branch reference...")
         update_ref_data = {
             "sha": commit_sha
         }
         await github_api_request(f"/repos/{owner}/{repo}/git/refs/heads/{request_data.branch_name}", github_token, "PATCH", update_ref_data)
+        print(f"✅ Branch updated with new commit")
         
         # 9. Create the pull request
+        print("📡 Step 9: Creating pull request...")
         pr_data = {
             "title": f"Add test file: {request_data.test_file_name}",
             "head": request_data.branch_name,
             "base": default_branch,
-            "body": f"This PR adds automated test cases generated by Test Case Generator.\n\n**Test file:** `{request_data.test_file_name}`\n\n**Commit:** {request_data.commit_message}"
+            "body": f"This PR adds automated test cases generated by Test Case Generator.\n\n**Test file:** `{request_data.test_file_name}`\n\n**Commit:** {request_data.commit_message}\n\n---\n*Generated by GitHub Test Case Generator*"
         }
         pr_response = await github_api_request(f"/repos/{owner}/{repo}/pulls", github_token, "POST", pr_data)
+        
+        print(f"🎉 PR created successfully: #{pr_response['number']}")
         
         return {
             "success": True,
@@ -1361,7 +1534,21 @@ async def create_pull_request(request_data: CreatePRRequest, request: Request):
         }
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create pull request: {str(e)}")
+        print(f"❌ PR creation failed: {str(e)}")
+        print(f"Error type: {type(e).__name__}")
+        
+        # Provide more specific error messages
+        error_message = str(e)
+        if "403" in error_message or "Forbidden" in error_message:
+            error_message = "Permission denied. You may not have write access to this repository, or the repository may be archived."
+        elif "404" in error_message or "Not Found" in error_message:
+            error_message = "Repository not found or not accessible with your current permissions."
+        elif "422" in error_message or "Unprocessable Entity" in error_message:
+            error_message = "Invalid request data. The branch name might already exist or contain invalid characters."
+        elif "401" in error_message or "Unauthorized" in error_message:
+            error_message = "Authentication failed. Please login again."
+        
+        raise HTTPException(status_code=500, detail=f"Failed to create pull request: {error_message}")
 
 # End of API endpoints
 

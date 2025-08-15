@@ -6,7 +6,8 @@ import {
   createPullRequest,
   getFrameworksForFile,
   generateSuggestionsOAuth,
-  generateCodeOAuth
+  generateCodeOAuth,
+  testSimpleSuggestions
 } from '../services/api'
 import { useAuth } from '../context/AuthContext'
 import { ENV } from '../config/env'
@@ -23,7 +24,10 @@ import {
   CheckSquare,
   Square,
   Copy,
-  Download
+  Download,
+  Github,
+  ExternalLink,
+  Zap
 } from 'lucide-react'
 
 const TestGenerator = () => {
@@ -39,6 +43,17 @@ const TestGenerator = () => {
   const [suggestions, setSuggestions] = useState([])
   const [selectedSuggestion, setSelectedSuggestion] = useState(null)
   const [generatedCode, setGeneratedCode] = useState(null)
+
+  // Debug suggestions state changes
+  useEffect(() => {
+    console.log('🔍 Suggestions state changed:', suggestions)
+    console.log('🔍 Suggestions length:', suggestions.length)
+    console.log('🔍 Suggestions type:', typeof suggestions)
+    console.log('🔍 Is array:', Array.isArray(suggestions))
+    if (suggestions.length > 0) {
+      console.log('🔍 First suggestion:', suggestions[0])
+    }
+  }, [suggestions])
   
   // Loading states
   const [loadingSuggestions, setLoadingSuggestions] = useState(false)
@@ -74,29 +89,202 @@ const TestGenerator = () => {
     const detectFramework = async () => {
       if (selectedFiles.length > 0) {
         try {
-          const response = await getFrameworksForFile(selectedFiles[0])
-          setDetectedFramework(response.default_framework || 'pytest')
-        } catch (err) {
-          console.error('Failed to detect framework:', err)
-          // Auto-detect based on file extension
-          const firstFile = selectedFiles[0]
-          const ext = firstFile.split('.').pop()?.toLowerCase()
+          // Try backend detection first with repo URL for enhanced detection
+          const repoUrl = repoData?.repoUrl || (repoData?.repository?.full_name ? `https://github.com/${repoData.repository.full_name}` : null)
+          const url = repoUrl ? 
+            `/frameworks/${selectedFiles[0]}?repo_url=${encodeURIComponent(repoUrl)}` :
+            `/frameworks/${selectedFiles[0]}`
           
-          if (['js', 'jsx', 'ts', 'tsx'].includes(ext)) {
-            setDetectedFramework('jest')
-          } else if (['py'].includes(ext)) {
-            setDetectedFramework('pytest')
-          } else if (['java'].includes(ext)) {
-            setDetectedFramework('junit')
-          } else {
-            setDetectedFramework('pytest')
+          const response = await fetch(`${ENV.API_BASE_URL}${url}`)
+          const data = await response.json()
+          
+          setDetectedFramework(data.default_framework || 'pytest')
+          console.log('🔧 Backend detected framework:', data.default_framework)
+          console.log('🔧 Enhanced detection used:', data.enhanced_detection)
+          
+          if (data.enhanced_detection) {
+            setSuccess(`Framework auto-detected: ${data.default_framework} (enhanced detection)`)
           }
+        } catch (err) {
+          console.error('Failed to detect framework from backend:', err)
+          
+          // Enhanced client-side framework detection
+          const detectedFramework = detectFrameworkFromFiles(selectedFiles, repoData)
+          setDetectedFramework(detectedFramework)
+          console.log('🔧 Client-side detected framework:', detectedFramework)
         }
       }
     }
 
     detectFramework()
-  }, [selectedFiles])
+  }, [selectedFiles, repoData])
+
+  // Enhanced framework detection function
+  const detectFrameworkFromFiles = (files, repoData) => {
+    console.log('🔍 Analyzing files for framework detection:', files)
+    console.log('📁 Repository data:', repoData)
+    
+    // Count file types
+    const fileStats = {
+      python: 0,
+      javascript: 0,
+      typescript: 0,
+      java: 0,
+      csharp: 0,
+      go: 0,
+      ruby: 0,
+      php: 0
+    }
+    
+    // Analyze all files to understand the project
+    const allFiles = repoData?.files || []
+    const projectFiles = [...files, ...allFiles.map(f => f.path || f.name || f)].filter(Boolean)
+    
+    projectFiles.forEach(file => {
+      const ext = file.split('.').pop()?.toLowerCase()
+      switch (ext) {
+        case 'py':
+          fileStats.python++
+          break
+        case 'js':
+        case 'jsx':
+          fileStats.javascript++
+          break
+        case 'ts':
+        case 'tsx':
+          fileStats.typescript++
+          break
+        case 'java':
+          fileStats.java++
+          break
+        case 'cs':
+          fileStats.csharp++
+          break
+        case 'go':
+          fileStats.go++
+          break
+        case 'rb':
+          fileStats.ruby++
+          break
+        case 'php':
+          fileStats.php++
+          break
+      }
+    })
+    
+    console.log('📊 File statistics:', fileStats)
+    
+    // Check for specific framework indicators in file names and structure
+    const packageJsonExists = allFiles.some(f => (f.path || f.name || f).includes('package.json'))
+    const requirementsExists = allFiles.some(f => (f.path || f.name || f).includes('requirements.txt'))
+    const pomXmlExists = allFiles.some(f => (f.path || f.name || f).includes('pom.xml'))
+    const gradleExists = allFiles.some(f => (f.path || f.name || f).includes('build.gradle'))
+    const cypressExists = allFiles.some(f => (f.path || f.name || f).includes('cypress'))
+    const playwrightExists = allFiles.some(f => (f.path || f.name || f).includes('playwright'))
+    const seleniumFiles = allFiles.some(f => (f.path || f.name || f).toLowerCase().includes('selenium'))
+    
+    console.log('🔍 Project indicators:', {
+      packageJsonExists,
+      requirementsExists,
+      pomXmlExists,
+      gradleExists,
+      cypressExists,
+      playwrightExists,
+      seleniumFiles
+    })
+    
+    // Get the primary language of the current file selection
+    const primaryFile = files[0]
+    const primaryExt = primaryFile?.split('.').pop()?.toLowerCase()
+    
+    console.log('📄 Primary file:', primaryFile, 'Extension:', primaryExt)
+    
+    // Detect framework based on file types and project structure
+    if (cypressExists || allFiles.some(f => (f.path || f.name || f).includes('cypress.config'))) {
+      return 'cypress'
+    }
+    
+    if (playwrightExists || allFiles.some(f => (f.path || f.name || f).includes('playwright.config'))) {
+      return 'playwright'
+    }
+    
+    if (seleniumFiles && (fileStats.python > 0)) {
+      return 'selenium'
+    }
+    
+    // Language-based detection
+    if (primaryExt === 'py' || fileStats.python > fileStats.javascript + fileStats.typescript) {
+      // Check for specific Python testing frameworks
+      if (allFiles.some(f => (f.path || f.name || f).includes('conftest.py'))) {
+        return 'pytest'
+      }
+      if (allFiles.some(f => (f.path || f.name || f).toLowerCase().includes('unittest'))) {
+        return 'unittest'
+      }
+      return 'pytest' // Default for Python
+    }
+    
+    if ((primaryExt === 'js' || primaryExt === 'jsx') || 
+        (fileStats.javascript > fileStats.python && fileStats.javascript > fileStats.typescript)) {
+      // Check for React/Node.js testing frameworks
+      if (allFiles.some(f => (f.path || f.name || f).includes('jest.config'))) {
+        return 'jest'
+      }
+      if (allFiles.some(f => (f.path || f.name || f).includes('vitest.config'))) {
+        return 'vitest'
+      }
+      if (allFiles.some(f => (f.path || f.name || f).includes('mocha'))) {
+        return 'mocha'
+      }
+      return 'jest' // Default for JavaScript
+    }
+    
+    if ((primaryExt === 'ts' || primaryExt === 'tsx') || 
+        (fileStats.typescript > fileStats.javascript && fileStats.typescript > fileStats.python)) {
+      // TypeScript projects
+      if (allFiles.some(f => (f.path || f.name || f).includes('jest.config'))) {
+        return 'jest'
+      }
+      if (allFiles.some(f => (f.path || f.name || f).includes('vitest.config'))) {
+        return 'vitest'
+      }
+      return 'jest' // Default for TypeScript
+    }
+    
+    if (primaryExt === 'java' || fileStats.java > 0) {
+      // Java projects
+      if (gradleExists || allFiles.some(f => (f.path || f.name || f).includes('build.gradle'))) {
+        return 'junit'
+      }
+      if (pomXmlExists || allFiles.some(f => (f.path || f.name || f).includes('pom.xml'))) {
+        return 'junit'
+      }
+      return 'junit' // Default for Java
+    }
+    
+    if (primaryExt === 'cs' || fileStats.csharp > 0) {
+      return 'nunit'
+    }
+    
+    if (primaryExt === 'go' || fileStats.go > 0) {
+      return 'testing'
+    }
+    
+    if (primaryExt === 'rb' || fileStats.ruby > 0) {
+      return 'rspec'
+    }
+    
+    if (primaryExt === 'php' || fileStats.php > 0) {
+      return 'phpunit'
+    }
+    
+    // Default fallback based on most common file type
+    if (fileStats.python > 0) return 'pytest'
+    if (fileStats.javascript > 0 || fileStats.typescript > 0) return 'jest'
+    if (fileStats.java > 0) return 'junit'
+    
+    return 'pytest' // Ultimate fallback
+  }
 
   // Auto-generate tests when files are pre-selected (for "Generate All Tests" mode)
   useEffect(() => {
@@ -125,28 +313,74 @@ const TestGenerator = () => {
     setGeneratedCode(null)
 
     try {
+      console.log('🚀 Starting test suggestion generation...')
+      console.log('📊 Selected files:', selectedFiles)
+      console.log('🔧 Framework:', detectedFramework)
+      console.log('🔐 Authenticated:', isAuthenticated)
+      console.log('📁 Repo data:', repoData)
+      
       let data
       if (isAuthenticated && repoData.repository?.full_name) {
-        // Use OAuth endpoint for authenticated users with repository access
-        data = await generateSuggestionsOAuth(
-          selectedFiles,
-          repoData.repository.full_name,
-          detectedFramework
-        )
+        console.log('📡 Using OAuth endpoint for authenticated user...')
+        console.log('🔑 Repository:', repoData.repository.full_name)
+        console.log('📄 Files:', selectedFiles)
+        console.log('🔧 Framework:', detectedFramework)
+        
+        try {
+          data = await generateSuggestionsOAuth(
+            selectedFiles,
+            repoData.repository.full_name,
+            detectedFramework
+          )
+          console.log('✅ OAuth endpoint successful')
+        } catch (oauthError) {
+          console.error('❌ OAuth endpoint failed, trying direct endpoint:', oauthError)
+          // Fallback to direct endpoint
+          data = await generateTestSuggestions(
+            repoData.repoUrl || `https://github.com/${repoData.repository.full_name}`,
+            selectedFiles,
+            detectedFramework
+          )
+          console.log('✅ Direct endpoint fallback successful')
+        }
       } else {
-        // Use direct endpoint for public repository analysis
+        console.log('📡 Using direct endpoint for public repository...')
+        console.log('🌐 Repo URL:', repoData.repoUrl)
         data = await generateTestSuggestions(
           repoData.repoUrl,
           selectedFiles,
           detectedFramework
         )
       }
-      setSuggestions(data.suggestions || [])
-      setSuccess(`Generated ${data.suggestions?.length || 0} test suggestions`)
+      
+      console.log('✅ API Response received:', data)
+      console.log('📋 Suggestions count:', data.suggestions?.length || 0)
+      console.log('📋 Full suggestions array:', data.suggestions)
+      
+      // FORCE set suggestions regardless - for debugging
+      if (data.suggestions) {
+        console.log('🔧 FORCING suggestions to be set...')
+        setSuggestions(data.suggestions)
+        setSuccess(`Generated ${data.suggestions.length} test suggestions`)
+        console.log('🎉 Success: Set suggestions in state')
+        console.log('🎉 Current suggestions state will be:', data.suggestions)
+      } else {
+        console.log('⚠️ No suggestions property in response')
+        console.log('⚠️ Full response object:', JSON.stringify(data, null, 2))
+        setSuggestions([])
+        setError('No test suggestions were generated. Please try again or select different files.')
+      }
     } catch (err) {
-      console.error('Failed to generate suggestions:', err)
+      console.error('❌ Failed to generate suggestions:', err)
+      console.error('Error details:', err.response?.data)
+      console.error('Error status:', err.response?.status)
+      console.error('Error config:', err.config)
+      console.error('Full error object:', err)
+      
+      setSuggestions([])
       setError(
         err.response?.data?.detail || 
+        err.message ||
         'Failed to generate test suggestions. Please try again.'
       )
     } finally {
@@ -163,14 +397,28 @@ const TestGenerator = () => {
     try {
       let data
       if (isAuthenticated && repoData.repository?.full_name) {
-        // Use OAuth endpoint for authenticated users with repository access
-        data = await generateCodeOAuth(
-          suggestion.id,
-          suggestion.summary,
-          selectedFiles,
-          repoData.repository.full_name,
-          detectedFramework
-        )
+        console.log('🔐 Using OAuth endpoint for code generation...')
+        try {
+          data = await generateCodeOAuth(
+            suggestion.id,
+            suggestion.summary,
+            selectedFiles,
+            repoData.repository.full_name,
+            detectedFramework
+          )
+          console.log('✅ OAuth code generation successful')
+        } catch (oauthError) {
+          console.error('❌ OAuth code generation failed, trying direct endpoint:', oauthError)
+          // Fallback to direct endpoint
+          data = await generateTestCode(
+            repoData.repoUrl || `https://github.com/${repoData.repository.full_name}`,
+            suggestion.id,
+            suggestion.summary,
+            selectedFiles,
+            detectedFramework
+          )
+          console.log('✅ Direct code generation fallback successful')
+        }
       } else {
         // Use direct endpoint for public repository analysis
         data = await generateTestCode(
@@ -195,13 +443,23 @@ const TestGenerator = () => {
   }
 
   const handleCreatePR = async () => {
-    if (!generatedCode || !isAuthenticated) {
-      setError('Authentication required to create pull requests')
+    console.log('🚀 Starting PR creation...')
+    console.log('📊 Generated code:', generatedCode)
+    console.log('🔐 Authenticated:', isAuthenticated)
+    console.log('📁 Repository:', repoData.repository)
+    
+    if (!generatedCode) {
+      setError('No test code generated yet. Please generate test code first.')
+      return
+    }
+
+    if (!isAuthenticated) {
+      setError('GitHub authentication required to create pull requests. Please login first.')
       return
     }
 
     if (!repoData.repository?.full_name) {
-      setError('Pull requests can only be created for authenticated repository access')
+      setError('Repository information missing. Pull requests can only be created for authenticated repository access.')
       return
     }
 
@@ -210,7 +468,13 @@ const TestGenerator = () => {
 
     try {
       const branchName = `testgen/${generatedCode.suggested_filename.replace(/\./g, '-')}-${Date.now()}`
-      const commitMessage = `Add ${generatedCode.suggested_filename}\n\nGenerated test for: ${selectedSuggestion.summary}`
+      const commitMessage = `Add ${generatedCode.suggested_filename}\n\nGenerated test for: ${selectedSuggestion?.summary || 'test case'}`
+
+      console.log('📝 PR Details:')
+      console.log('  Repository:', repoData.repository.full_name)
+      console.log('  Branch:', branchName)
+      console.log('  File:', generatedCode.suggested_filename)
+      console.log('  Commit message:', commitMessage)
 
       const prData = await createPullRequest(
         repoData.repository.full_name,
@@ -220,6 +484,8 @@ const TestGenerator = () => {
         commitMessage
       )
 
+      console.log('✅ PR created successfully:', prData)
+
       setSuccess(
         <div>
           Pull request created successfully! 
@@ -227,22 +493,167 @@ const TestGenerator = () => {
             href={prData.pr_url} 
             target="_blank" 
             rel="noopener noreferrer"
-            className="text-blue-600 hover:text-blue-800 ml-1 underline"
+            className="ml-1 underline"
+            style={{ color: 'var(--gh-accent-secondary)' }}
           >
-            View PR #{prData.pr_number}
+            View PR #{prData.pr_number} <ExternalLink className="h-3 w-3 inline ml-1" />
           </a>
         </div>
       )
     } catch (err) {
-      console.error('Failed to create PR:', err)
-      setError(
-        err.response?.data?.detail || 
-        'Failed to create pull request. Please try again.'
-      )
+      console.error('❌ Failed to create PR:', err)
+      console.error('Error response:', err.response?.data)
+      console.error('Error status:', err.response?.status)
+      
+      let errorMessage = 'Failed to create pull request.'
+      
+      if (err.response?.status === 401) {
+        errorMessage = 'Authentication expired. Please login again.'
+      } else if (err.response?.status === 403) {
+        errorMessage = 'Permission denied. You may not have write access to this repository.'
+      } else if (err.response?.status === 404) {
+        errorMessage = 'Repository not found or not accessible.'
+      } else if (err.response?.data?.detail) {
+        errorMessage = err.response.data.detail
+      } else if (err.message) {
+        errorMessage = err.message
+      }
+      
+      setError(`${errorMessage} Try the manual PR option instead.`)
     } finally {
       setCreatingPR(false)
     }
   }
+
+  const handleCreateManualPR = () => {
+    console.log('📝 Creating manual PR instructions...')
+    
+    if (!generatedCode) {
+      setError('No test code generated yet. Please generate test code first.')
+      return
+    }
+
+    // Create instructions for manual PR creation
+    const repoUrl = repoData.repository?.html_url || 
+                   (repoData.repoUrl ? repoData.repoUrl : `https://github.com/${repoData.repository?.full_name || 'owner/repo'}`)
+    const branchName = `testgen/${generatedCode.suggested_filename.replace(/\./g, '-')}-${Date.now()}`
+    const commitMessage = `Add ${generatedCode.suggested_filename}\n\nGenerated test for: ${selectedSuggestion?.summary || 'test case'}`
+    
+    console.log('📋 Manual PR details:')
+    console.log('  Repository URL:', repoUrl)
+    console.log('  Branch name:', branchName)
+    console.log('  File name:', generatedCode.suggested_filename)
+    
+    const instructions = `# Manual Pull Request Instructions
+
+## 📁 Repository: ${repoUrl}
+## 📄 Test File: ${generatedCode.suggested_filename}
+## 🌿 Branch: ${branchName}
+
+---
+
+## Step 1: Fork the Repository
+1. Go to: ${repoUrl}
+2. Click the "Fork" button to create your own copy
+3. Wait for the fork to complete
+
+## Step 2: Clone Your Fork
+\`\`\`bash
+git clone https://github.com/YOUR_USERNAME/${repoUrl.split('/').slice(-2).join('/')}.git
+cd ${repoUrl.split('/').pop()}
+\`\`\`
+
+## Step 3: Create a New Branch
+\`\`\`bash
+git checkout -b ${branchName}
+\`\`\`
+
+## Step 4: Create the Test File
+Create a new file: \`${generatedCode.suggested_filename}\`
+
+Copy and paste this test code:
+
+\`\`\`${generatedCode.language || 'python'}
+${generatedCode.test_code}
+\`\`\`
+
+## Step 5: Commit and Push
+\`\`\`bash
+git add ${generatedCode.suggested_filename}
+git commit -m "${commitMessage.split('\n')[0]}"
+git push origin ${branchName}
+\`\`\`
+
+## Step 6: Create Pull Request
+1. Go to your forked repository on GitHub
+2. You should see a "Compare & pull request" button
+3. Click it and add a description:
+
+**Title:** ${commitMessage.split('\n')[0]}
+
+**Description:**
+${commitMessage.split('\n').slice(1).join('\n')}
+
+Framework: ${generatedCode.framework}
+Language: ${generatedCode.language}
+
+Generated by GitHub Test Case Generator
+
+4. Click "Create pull request"
+
+---
+
+## 🎯 Quick Links
+- Original Repository: ${repoUrl}
+- Your Fork: https://github.com/YOUR_USERNAME/${repoUrl.split('/').slice(-2).join('/')}
+
+## 📞 Need Help?
+If you encounter issues:
+1. Make sure you have write access to your fork
+2. Check that the branch name is unique
+3. Verify the test file syntax is correct
+4. Ensure you're pushing to your fork, not the original repo
+
+---
+Generated by GitHub Test Case Generator
+Generated on: ${new Date().toLocaleString()}
+    `.trim()
+
+    try {
+      // Create a downloadable instructions file
+      const blob = new Blob([instructions], { type: 'text/markdown' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `PR_Instructions_${generatedCode.suggested_filename.replace(/\./g, '_')}.md`
+      a.click()
+      URL.revokeObjectURL(url)
+
+      console.log('✅ Instructions file downloaded')
+
+      // Also show success message
+      setSuccess(
+        <div>
+          PR instructions downloaded! 
+          <a 
+            href={repoUrl} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="ml-1 underline"
+            style={{ color: 'var(--gh-accent-secondary)' }}
+          >
+            Open Repository <ExternalLink className="h-3 w-3 inline ml-1" />
+          </a>
+        </div>
+      )
+      setError('')
+    } catch (err) {
+      console.error('❌ Failed to create instructions:', err)
+      setError('Failed to create PR instructions. Please copy the test code manually.')
+    }
+  }
+
+
 
   if (!repoData) {
     return (
@@ -284,6 +695,8 @@ const TestGenerator = () => {
         </div>
         <Settings className="h-8 w-8 text-blue-600" />
       </div>
+
+
 
       {/* Status Messages */}
       {error && (
@@ -375,34 +788,92 @@ const TestGenerator = () => {
               <h3 className="text-lg font-semibold text-gray-900 mb-2">
                 Testing Framework
               </h3>
-              <div className="flex items-center space-x-2">
-                <div className="px-3 py-2 bg-green-100 text-green-800 rounded-md font-medium">
-                  {detectedFramework.charAt(0).toUpperCase() + detectedFramework.slice(1)}
+              <div className="space-y-2">
+                <div className="flex items-center space-x-2">
+                  <div className="px-3 py-2 bg-green-100 text-green-800 rounded-md font-medium">
+                    {detectedFramework.charAt(0).toUpperCase() + detectedFramework.slice(1)}
+                  </div>
+                  <span className="text-sm text-gray-600">Auto-detected</span>
                 </div>
-                <span className="text-sm text-gray-600">Auto-detected</span>
+                
+                {/* Show detection method info */}
+                <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded">
+                  <div className="font-medium mb-1">Detection Info:</div>
+                  <div>• Primary file: {selectedFiles[0]?.split('/').pop()}</div>
+                  <div>• Language: {selectedFiles[0]?.split('.').pop()?.toUpperCase()}</div>
+                  <div>• Method: {success?.includes('enhanced') ? 'Project structure analysis' : 'File extension + heuristics'}</div>
+                </div>
               </div>
             </div>
           )}
 
           {/* Generate Suggestions Button - Only show in individual selection mode */}
           {repoData?.generateMode !== 'all' && (
-            <button
-              onClick={handleGenerateSuggestions}
-              disabled={loadingSuggestions || selectedFiles.length === 0}
-              className="btn-primary w-full flex items-center justify-center space-x-2"
-            >
-              {loadingSuggestions ? (
-                <>
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                  <span>Generating...</span>
-                </>
-              ) : (
-                <>
-                  <Settings className="h-5 w-5" />
-                  <span>Generate Test Suggestions</span>
-                </>
+            <div className="space-y-2">
+              <button
+                onClick={handleGenerateSuggestions}
+                disabled={loadingSuggestions || selectedFiles.length === 0}
+                className="btn-primary w-full flex items-center justify-center space-x-2"
+              >
+                {loadingSuggestions ? (
+                  <>
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    <span>Generating...</span>
+                  </>
+                ) : (
+                  <>
+                    <Settings className="h-5 w-5" />
+                    <span>Generate Test Suggestions</span>
+                  </>
+                )}
+              </button>
+              
+              {/* Debug Test Button */}
+              <button
+                onClick={async () => {
+                  console.log('🧪 Testing simple endpoint...')
+                  try {
+                    const data = await testSimpleSuggestions()
+                    console.log('🧪 Test response:', data)
+                    setSuggestions(data.suggestions)
+                    setSuccess(`Test: Loaded ${data.suggestions.length} suggestions`)
+                    setError('')
+                  } catch (err) {
+                    console.error('🧪 Test failed:', err)
+                    setError('Test endpoint failed')
+                  }
+                }}
+                className="btn-secondary w-full text-sm"
+              >
+                🧪 Test Simple Suggestions
+              </button>
+              
+              {/* OAuth Debug Button for authenticated users */}
+              {isAuthenticated && repoData.repository?.full_name && (
+                <button
+                  onClick={async () => {
+                    console.log('🔐 Testing OAuth endpoint...')
+                    setError('')
+                    try {
+                      const data = await generateSuggestionsOAuth(
+                        selectedFiles.length > 0 ? selectedFiles : ['README.md'],
+                        repoData.repository.full_name,
+                        detectedFramework || 'pytest'
+                      )
+                      console.log('🔐 OAuth test response:', data)
+                      setSuggestions(data.suggestions)
+                      setSuccess(`OAuth Test: Loaded ${data.suggestions.length} suggestions`)
+                    } catch (err) {
+                      console.error('🔐 OAuth test failed:', err)
+                      setError(`OAuth test failed: ${err.message}`)
+                    }
+                  }}
+                  className="btn-secondary w-full text-sm bg-blue-50 border-blue-200 text-blue-700"
+                >
+                  🔐 Test OAuth Endpoint
+                </button>
               )}
-            </button>
+            </div>
           )}
         </div>
 
@@ -458,7 +929,7 @@ const TestGenerator = () => {
           {generatedCode && (
             <div className="card space-y-4">
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-gray-900">
+                <h3 className="text-lg font-semibold" style={{ color: 'var(--gh-text-primary)' }}>
                   Generated Test Code
                 </h3>
                 <div className="flex items-center space-x-2">
@@ -487,24 +958,33 @@ const TestGenerator = () => {
                 </div>
               </div>
               
-              <div className="bg-gray-100 px-3 py-2 rounded-t border-b">
-                <span className="text-sm font-mono text-gray-700">
+              <div className="px-3 py-2 rounded-t border-b" style={{ 
+                backgroundColor: 'var(--gh-bg-tertiary)', 
+                borderColor: 'var(--gh-border-primary)' 
+              }}>
+                <span className="text-sm font-mono" style={{ color: 'var(--gh-text-primary)' }}>
                   {generatedCode.suggested_filename}
                 </span>
-                <span className="text-xs text-gray-500 ml-2">
+                <span className="text-xs ml-2" style={{ color: 'var(--gh-text-tertiary)' }}>
                   ({generatedCode.framework} • {generatedCode.language})
                 </span>
               </div>
               
-              <div className="bg-gray-50 p-4 rounded-b max-h-96 overflow-auto">
-                <pre className="text-sm text-gray-800 whitespace-pre-wrap font-mono">
+              <div className="p-4 rounded-b max-h-96 overflow-auto" style={{ backgroundColor: 'var(--gh-bg-primary)' }}>
+                <pre className="text-sm whitespace-pre-wrap font-mono" style={{ color: 'var(--gh-text-primary)' }}>
                   {generatedCode.test_code}
                 </pre>
               </div>
 
               {/* Create PR Button */}
-              {isAuthenticated && (
-                <div className="flex justify-end pt-4 border-t">
+              <div className="flex justify-between items-center pt-4 border-t" style={{ borderColor: 'var(--gh-border-primary)' }}>
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm" style={{ color: 'var(--gh-text-secondary)' }}>
+                    Ready to add this test to your repository?
+                  </span>
+                </div>
+                
+                {isAuthenticated ? (
                   <button
                     onClick={handleCreatePR}
                     disabled={creatingPR}
@@ -522,14 +1002,44 @@ const TestGenerator = () => {
                       </>
                     )}
                   </button>
-                </div>
-              )}
+                ) : (
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={handleCreateManualPR}
+                      className="btn-secondary flex items-center space-x-2"
+                    >
+                      <GitBranch className="h-4 w-4" />
+                      <span>Create PR Manually</span>
+                    </button>
+                    <a
+                      href="/auth/github"
+                      className="btn-primary flex items-center space-x-2 text-sm"
+                    >
+                      <Github className="h-4 w-4" />
+                      <span>Login for Auto PR</span>
+                    </a>
+                  </div>
+                )}
+              </div>
 
               {!isAuthenticated && (
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                  <p className="text-yellow-800 text-sm">
-                    <strong>Note:</strong> Login with GitHub to create pull requests with generated test code.
-                  </p>
+                <div className="rounded-lg p-4" style={{ 
+                  backgroundColor: 'rgba(47, 129, 247, 0.1)', 
+                  borderColor: 'var(--gh-accent-secondary)',
+                  border: '1px solid'
+                }}>
+                  <div className="flex items-start space-x-3">
+                    <GitBranch className="h-5 w-5 mt-0.5" style={{ color: 'var(--gh-accent-secondary)' }} />
+                    <div>
+                      <h4 className="font-medium mb-1" style={{ color: 'var(--gh-text-primary)' }}>
+                        Create Pull Request Options
+                      </h4>
+                      <ul className="text-sm space-y-1" style={{ color: 'var(--gh-text-secondary)' }}>
+                        <li>• <strong>Manual PR:</strong> Get instructions to create PR yourself</li>
+                        <li>• <strong>Auto PR:</strong> Login with GitHub for automatic PR creation</li>
+                      </ul>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
